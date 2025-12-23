@@ -8,6 +8,8 @@ import { auditEvents } from "@/db/schema";
 
 export type AuditAction =
   | "transaction_set_created"
+  | "transaction_set_submitted"
+  | "transaction_set_posted"
   | "business_transaction_created"
   | "document_uploaded"
   | "document_linked"
@@ -16,8 +18,9 @@ export type AuditAction =
   | "validation_issues_created"
   | "approval_requested"
   | "approval_decided"
-  | "transaction_set_posted"
   | "journal_entry_created"
+  | "journal_reversal_requested"
+  | "journal_reversed"
   | "reversal_created";
 
 export interface AuditEventInput {
