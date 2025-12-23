@@ -1,31 +1,726 @@
 /**
- * Posting service placeholder
+ * Posting Service
  *
  * THIS IS THE ONLY FILE ALLOWED TO WRITE TO journal_entries AND journal_lines.
  *
- * Layer 1 does not implement posting. This file exists to:
- * 1. Mark the allowed location for future ledger writes
- * 2. Allow the guardrail script to verify no other files write to ledger tables
- *
- * Future implementation will include:
- * - postTransactionSet(transactionSetId): Creates journal entries from posted transaction set
- * - Validation that transaction_set is in "posted" status
- * - Atomic creation of journal_entry + journal_lines
- * - Audit logging for posting actions
+ * The posting service:
+ * 1. Validates posting preconditions (status, approvals, validations, documents)
+ * 2. Creates posting_runs for idempotency tracking
+ * 3. Parses posting_intents and resolves accounts
+ * 4. Validates double-entry balance
+ * 5. Creates journal_entries and journal_lines
+ * 6. Updates transaction_set status to 'posted'
+ * 7. Creates audit events
  */
 
-// Placeholder types for future implementation
-export interface PostingResult {
-  journalEntryId: string;
-  journalLineIds: string[];
+import { db } from "@/db";
+import {
+  transactionSets,
+  postingIntents,
+  postingRuns,
+  journalEntries,
+  journalLines,
+  accounts,
+  documentLinks,
+  validationIssues,
+  overrides,
+  approvals,
+  reversalLinks,
+} from "@/db/schema";
+import { eq, and, sql, asc } from "drizzle-orm";
+import { logAuditEvent } from "./audit";
+
+// Types for posting intent structure
+export interface PostingIntentLine {
+  accountCode?: string;
+  accountId?: string;
+  debit: string | number;
+  credit: string | number;
+  description?: string;
 }
 
-// Future: This function will be implemented to post transaction sets to the ledger
-// export async function postTransactionSet(
-//   tenantId: string,
-//   actorId: string,
-//   transactionSetId: string
-// ): Promise<PostingResult> {
-//   // Will insert into journalEntries and journalLines here
-//   throw new Error("Not implemented in Layer 1");
-// }
+export interface PostingIntent {
+  postingDate: string;
+  memo?: string;
+  lines: PostingIntentLine[];
+}
+
+export interface PostingResult {
+  success: boolean;
+  journalEntryId?: string;
+  journalLineIds?: string[];
+  postingRunId: string;
+  error?: string;
+}
+
+export interface PostingContext {
+  tenantId: string;
+  actorId: string;
+  transactionSetId: string;
+}
+
+/**
+ * Main posting function - THE ONLY place that writes to ledger tables.
+ */
+export async function postTransactionSet(ctx: PostingContext): Promise<PostingResult> {
+  const { tenantId, actorId, transactionSetId } = ctx;
+
+  // 1. Check for existing posting run (idempotency)
+  const existingRun = await db
+    .select()
+    .from(postingRuns)
+    .where(
+      and(
+        eq(postingRuns.tenantId, tenantId),
+        eq(postingRuns.transactionSetId, transactionSetId)
+      )
+    )
+    .limit(1);
+
+  if (existingRun.length > 0) {
+    const run = existingRun[0];
+    if (run.status === "succeeded") {
+      return {
+        success: true,
+        journalEntryId: run.journalEntryId ?? undefined,
+        postingRunId: run.id,
+      };
+    }
+    if (run.status === "started") {
+      return {
+        success: false,
+        postingRunId: run.id,
+        error: "Posting already in progress",
+      };
+    }
+    // If failed, we'll create a new run below by deleting the old one
+    await db
+      .delete(postingRuns)
+      .where(eq(postingRuns.id, run.id));
+  }
+
+  // 2. Create posting run
+  const [postingRun] = await db
+    .insert(postingRuns)
+    .values({
+      tenantId,
+      transactionSetId,
+      status: "started",
+      startedByActorId: actorId,
+    })
+    .returning();
+
+  try {
+    // 3. Fetch transaction set
+    const [txSet] = await db
+      .select()
+      .from(transactionSets)
+      .where(
+        and(
+          eq(transactionSets.id, transactionSetId),
+          eq(transactionSets.tenantId, tenantId)
+        )
+      )
+      .limit(1);
+
+    if (!txSet) {
+      throw new PostingError("Transaction set not found");
+    }
+
+    // 4. Check status - must be 'review' to post
+    if (txSet.status === "posted") {
+      throw new PostingError("Transaction set already posted");
+    }
+    if (txSet.status === "draft") {
+      throw new PostingError("Transaction set must be submitted for review before posting");
+    }
+
+    // 5. Check for pending approvals
+    const pendingApprovals = await db
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(
+        and(
+          eq(approvals.tenantId, tenantId),
+          eq(approvals.entityType, "transaction_set"),
+          eq(approvals.entityId, transactionSetId),
+          eq(approvals.status, "pending")
+        )
+      )
+      .limit(1);
+
+    if (pendingApprovals.length > 0) {
+      throw new PostingError("Cannot post: pending approval required");
+    }
+
+    // 6. Check for unresolved error-severity validation issues without overrides
+    const openErrorIssues = await db
+      .select({ id: validationIssues.id })
+      .from(validationIssues)
+      .where(
+        and(
+          eq(validationIssues.tenantId, tenantId),
+          eq(validationIssues.entityType, "transaction_set"),
+          eq(validationIssues.entityId, transactionSetId),
+          eq(validationIssues.severity, "error"),
+          eq(validationIssues.status, "open")
+        )
+      );
+
+    // Check if these issues have overrides
+    for (const issue of openErrorIssues) {
+      const hasOverride = await db
+        .select({ id: overrides.id })
+        .from(overrides)
+        .where(
+          and(
+            eq(overrides.tenantId, tenantId),
+            eq(overrides.validationIssueId, issue.id)
+          )
+        )
+        .limit(1);
+
+      if (hasOverride.length === 0) {
+        throw new PostingError(`Cannot post: unresolved validation error (issue ${issue.id})`);
+      }
+    }
+
+    // 7. Check for document evidence (unless overridden)
+    const docLinks = await db
+      .select({ id: documentLinks.id })
+      .from(documentLinks)
+      .where(
+        and(
+          eq(documentLinks.tenantId, tenantId),
+          eq(documentLinks.entityType, "transaction_set"),
+          eq(documentLinks.entityId, transactionSetId)
+        )
+      )
+      .limit(1);
+
+    if (docLinks.length === 0) {
+      // Check for document override
+      const docOverride = await db
+        .select({ id: overrides.id })
+        .from(overrides)
+        .where(
+          and(
+            eq(overrides.tenantId, tenantId),
+            eq(overrides.entityType, "transaction_set"),
+            eq(overrides.entityId, transactionSetId)
+          )
+        )
+        .limit(1);
+
+      if (docOverride.length === 0) {
+        throw new PostingError("Cannot post: missing document evidence. Add a document or create an override.");
+      }
+    }
+
+    // 8. Fetch posting intent
+    const [intent] = await db
+      .select()
+      .from(postingIntents)
+      .where(
+        and(
+          eq(postingIntents.tenantId, tenantId),
+          eq(postingIntents.transactionSetId, transactionSetId)
+        )
+      )
+      .limit(1);
+
+    if (!intent) {
+      throw new PostingError("No posting intent found for transaction set");
+    }
+
+    const postingIntent = intent.intent as PostingIntent;
+
+    if (!postingIntent.lines || postingIntent.lines.length === 0) {
+      throw new PostingError("Posting intent has no lines");
+    }
+
+    // 9. Validate and resolve accounts
+    const resolvedLines: Array<{
+      accountId: string;
+      debit: string;
+      credit: string;
+      description: string | null;
+    }> = [];
+
+    let totalDebit = 0;
+    let totalCredit = 0;
+
+    for (let i = 0; i < postingIntent.lines.length; i++) {
+      const line = postingIntent.lines[i];
+      const debit = parseNumeric(line.debit);
+      const credit = parseNumeric(line.credit);
+
+      // Validate: cannot have both debit and credit > 0
+      if (debit > 0 && credit > 0) {
+        throw new PostingError(`Line ${i + 1}: cannot have both debit and credit > 0`);
+      }
+
+      // Validate: must have at least one non-zero
+      if (debit === 0 && credit === 0) {
+        throw new PostingError(`Line ${i + 1}: both debit and credit are zero`);
+      }
+
+      // Resolve account
+      let accountId: string;
+      if (line.accountId) {
+        const [account] = await db
+          .select({ id: accounts.id })
+          .from(accounts)
+          .where(
+            and(
+              eq(accounts.id, line.accountId),
+              eq(accounts.tenantId, tenantId),
+              eq(accounts.isActive, true)
+            )
+          )
+          .limit(1);
+
+        if (!account) {
+          throw new PostingError(`Line ${i + 1}: account not found (id: ${line.accountId})`);
+        }
+        accountId = account.id;
+      } else if (line.accountCode) {
+        const [account] = await db
+          .select({ id: accounts.id })
+          .from(accounts)
+          .where(
+            and(
+              eq(accounts.code, line.accountCode),
+              eq(accounts.tenantId, tenantId),
+              eq(accounts.isActive, true)
+            )
+          )
+          .limit(1);
+
+        if (!account) {
+          throw new PostingError(`Line ${i + 1}: account not found (code: ${line.accountCode})`);
+        }
+        accountId = account.id;
+      } else {
+        throw new PostingError(`Line ${i + 1}: must specify accountCode or accountId`);
+      }
+
+      resolvedLines.push({
+        accountId,
+        debit: debit.toFixed(6),
+        credit: credit.toFixed(6),
+        description: line.description ?? null,
+      });
+
+      totalDebit += debit;
+      totalCredit += credit;
+    }
+
+    // 10. Validate double-entry balance
+    if (Math.abs(totalDebit - totalCredit) > 0.000001) {
+      throw new PostingError(
+        `Entry is not balanced: debits (${totalDebit.toFixed(6)}) ≠ credits (${totalCredit.toFixed(6)})`
+      );
+    }
+
+    // 11. Create journal entry - THIS IS THE LEDGER WRITE
+    const [journalEntry] = await db
+      .insert(journalEntries)
+      .values({
+        tenantId,
+        postingDate: postingIntent.postingDate,
+        memo: postingIntent.memo ?? null,
+        sourceTransactionSetId: transactionSetId,
+        postedByActorId: actorId,
+      })
+      .returning();
+
+    // 12. Create journal lines - THIS IS THE LEDGER WRITE
+    const createdLines = await db
+      .insert(journalLines)
+      .values(
+        resolvedLines.map((line, index) => ({
+          tenantId,
+          journalEntryId: journalEntry.id,
+          lineNo: index + 1,
+          accountId: line.accountId,
+          debit: line.debit,
+          credit: line.credit,
+          description: line.description,
+        }))
+      )
+      .returning({ id: journalLines.id });
+
+    // 13. Update transaction set to posted
+    await db
+      .update(transactionSets)
+      .set({
+        status: "posted",
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(transactionSets.id, transactionSetId),
+          eq(transactionSets.tenantId, tenantId)
+        )
+      );
+
+    // 14. Update posting run to succeeded
+    await db
+      .update(postingRuns)
+      .set({
+        status: "succeeded",
+        journalEntryId: journalEntry.id,
+        finishedAt: sql`now()`,
+      })
+      .where(eq(postingRuns.id, postingRun.id));
+
+    // 15. Create audit events
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "journal_entry",
+      entityId: journalEntry.id,
+      action: "journal_entry_created",
+      metadata: {
+        sourceTransactionSetId: transactionSetId,
+        lineCount: resolvedLines.length,
+        totalDebit: totalDebit.toFixed(6),
+        totalCredit: totalCredit.toFixed(6),
+      },
+    });
+
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "transaction_set",
+      entityId: transactionSetId,
+      action: "transaction_set_posted",
+      metadata: {
+        journalEntryId: journalEntry.id,
+        postingRunId: postingRun.id,
+      },
+    });
+
+    return {
+      success: true,
+      journalEntryId: journalEntry.id,
+      journalLineIds: createdLines.map((l) => l.id),
+      postingRunId: postingRun.id,
+    };
+  } catch (error) {
+    // Update posting run to failed
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    await db
+      .update(postingRuns)
+      .set({
+        status: "failed",
+        error: errorMessage,
+        finishedAt: sql`now()`,
+      })
+      .where(eq(postingRuns.id, postingRun.id));
+
+    // Delete the failed run so retry is possible
+    await db.delete(postingRuns).where(eq(postingRuns.id, postingRun.id));
+
+    if (error instanceof PostingError) {
+      return {
+        success: false,
+        postingRunId: postingRun.id,
+        error: error.message,
+      };
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Custom error class for posting failures.
+ */
+export class PostingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PostingError";
+  }
+}
+
+/**
+ * Parse a numeric value from string or number input.
+ */
+function parseNumeric(value: string | number | undefined | null): number {
+  if (value === undefined || value === null) return 0;
+  if (typeof value === "number") return value;
+  const parsed = parseFloat(value);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Submit a transaction set for review (draft -> review).
+ */
+export async function submitForReview(
+  tenantId: string,
+  actorId: string,
+  transactionSetId: string
+): Promise<{ success: boolean; error?: string }> {
+  const [txSet] = await db
+    .select()
+    .from(transactionSets)
+    .where(
+      and(
+        eq(transactionSets.id, transactionSetId),
+        eq(transactionSets.tenantId, tenantId)
+      )
+    )
+    .limit(1);
+
+  if (!txSet) {
+    return { success: false, error: "Transaction set not found" };
+  }
+
+  if (txSet.status === "posted") {
+    return { success: false, error: "Transaction set already posted" };
+  }
+
+  if (txSet.status === "review") {
+    return { success: true }; // Already in review, idempotent
+  }
+
+  await db
+    .update(transactionSets)
+    .set({
+      status: "review",
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(transactionSets.id, transactionSetId),
+        eq(transactionSets.tenantId, tenantId)
+      )
+    );
+
+  await logAuditEvent({
+    tenantId,
+    actorId,
+    entityType: "transaction_set",
+    entityId: transactionSetId,
+    action: "transaction_set_submitted",
+    metadata: { previousStatus: "draft", newStatus: "review" },
+  });
+
+  return { success: true };
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Journal Entry Reversal
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export interface ReversalInput {
+  tenantId: string;
+  actorId: string;
+  originalJournalEntryId: string;
+  reason: string;
+  postingDate?: string; // YYYY-MM-DD, defaults to today
+  memo?: string;
+}
+
+export interface ReversalResult {
+  success: boolean;
+  originalJournalEntryId: string;
+  reversalJournalEntryId?: string;
+  transactionSetId?: string;
+  idempotent: boolean;
+  error?: string;
+}
+
+/**
+ * Reverse a posted journal entry.
+ *
+ * Creates a new journal entry with inverted lines (debits become credits, credits become debits).
+ * Uses reversal_links for idempotency - if already reversed, returns existing reversal.
+ *
+ * THIS FUNCTION WRITES TO LEDGER TABLES (journal_entries, journal_lines).
+ */
+export async function reverseJournalEntry(input: ReversalInput): Promise<ReversalResult> {
+  const { tenantId, actorId, originalJournalEntryId, reason, postingDate, memo } = input;
+
+  // 1. Log reversal request
+  await logAuditEvent({
+    tenantId,
+    actorId,
+    entityType: "journal_entry",
+    entityId: originalJournalEntryId,
+    action: "journal_reversal_requested",
+    metadata: { reason },
+  });
+
+  // 2. Check for existing reversal (idempotency)
+  const existingReversal = await db
+    .select({
+      reversalJournalEntryId: reversalLinks.reversalJournalEntryId,
+    })
+    .from(reversalLinks)
+    .where(
+      and(
+        eq(reversalLinks.tenantId, tenantId),
+        eq(reversalLinks.originalJournalEntryId, originalJournalEntryId)
+      )
+    )
+    .limit(1);
+
+  if (existingReversal.length > 0) {
+    // Already reversed, return existing reversal
+    const reversalId = existingReversal[0].reversalJournalEntryId;
+
+    // Get the transaction set for the reversal
+    const [reversalEntry] = await db
+      .select({ sourceTransactionSetId: journalEntries.sourceTransactionSetId })
+      .from(journalEntries)
+      .where(eq(journalEntries.id, reversalId))
+      .limit(1);
+
+    return {
+      success: true,
+      originalJournalEntryId,
+      reversalJournalEntryId: reversalId,
+      transactionSetId: reversalEntry?.sourceTransactionSetId ?? undefined,
+      idempotent: true,
+    };
+  }
+
+  // 3. Fetch original journal entry
+  const [originalEntry] = await db
+    .select()
+    .from(journalEntries)
+    .where(
+      and(
+        eq(journalEntries.id, originalJournalEntryId),
+        eq(journalEntries.tenantId, tenantId)
+      )
+    )
+    .limit(1);
+
+  if (!originalEntry) {
+    return {
+      success: false,
+      originalJournalEntryId,
+      idempotent: false,
+      error: "Original journal entry not found",
+    };
+  }
+
+  // 4. Fetch original journal lines
+  const originalLines = await db
+    .select()
+    .from(journalLines)
+    .where(
+      and(
+        eq(journalLines.journalEntryId, originalJournalEntryId),
+        eq(journalLines.tenantId, tenantId)
+      )
+    )
+    .orderBy(asc(journalLines.lineNo));
+
+  if (originalLines.length === 0) {
+    return {
+      success: false,
+      originalJournalEntryId,
+      idempotent: false,
+      error: "Original journal entry has no lines",
+    };
+  }
+
+  // 5. Determine posting date (use provided or today)
+  const reversalPostingDate = postingDate || new Date().toISOString().split("T")[0];
+
+  // 6. Create transaction set for the reversal
+  const [reversalTxSet] = await db
+    .insert(transactionSets)
+    .values({
+      tenantId,
+      status: "posted", // Reversals go directly to posted
+      source: "reversal",
+      createdByActorId: actorId,
+      businessDate: reversalPostingDate,
+      notes: `Reversal of journal entry ${originalJournalEntryId}: ${reason}`,
+    })
+    .returning();
+
+  // 7. Create reversal journal entry - THIS IS THE LEDGER WRITE
+  const reversalMemo =
+    memo || `Reversal of ${originalJournalEntryId}: ${reason}`;
+
+  const [reversalEntry] = await db
+    .insert(journalEntries)
+    .values({
+      tenantId,
+      postingDate: reversalPostingDate,
+      memo: reversalMemo,
+      sourceTransactionSetId: reversalTxSet.id,
+      postedByActorId: actorId,
+    })
+    .returning();
+
+  // 8. Create inverted journal lines - THIS IS THE LEDGER WRITE
+  const reversalLines = await db
+    .insert(journalLines)
+    .values(
+      originalLines.map((line) => ({
+        tenantId,
+        journalEntryId: reversalEntry.id,
+        lineNo: line.lineNo,
+        accountId: line.accountId,
+        // Invert: debit becomes credit, credit becomes debit
+        debit: line.credit,
+        credit: line.debit,
+        description: line.description ? `Reversal: ${line.description}` : "Reversal",
+      }))
+    )
+    .returning({ id: journalLines.id });
+
+  // 9. Create reversal link for traceability and idempotency
+  await db.insert(reversalLinks).values({
+    tenantId,
+    originalJournalEntryId,
+    reversalJournalEntryId: reversalEntry.id,
+    reason,
+    createdByActorId: actorId,
+  });
+
+  // 10. Create audit events
+  await logAuditEvent({
+    tenantId,
+    actorId,
+    entityType: "journal_entry",
+    entityId: reversalEntry.id,
+    action: "journal_reversed",
+    metadata: {
+      originalJournalEntryId,
+      reversalJournalEntryId: reversalEntry.id,
+      transactionSetId: reversalTxSet.id,
+      reason,
+      lineCount: reversalLines.length,
+    },
+  });
+
+  await logAuditEvent({
+    tenantId,
+    actorId,
+    entityType: "reversal_link",
+    entityId: reversalEntry.id,
+    action: "reversal_created",
+    metadata: {
+      originalJournalEntryId,
+      reversalJournalEntryId: reversalEntry.id,
+      reason,
+    },
+  });
+
+  return {
+    success: true,
+    originalJournalEntryId,
+    reversalJournalEntryId: reversalEntry.id,
+    transactionSetId: reversalTxSet.id,
+    idempotent: false,
+  };
+}

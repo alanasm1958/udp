@@ -63,10 +63,43 @@ async function main() {
       [tenantId, systemActorId, JSON.stringify({ adminUserId: userId, adminActorId })]
     );
 
+    // Bootstrap Chart of Accounts
+    const coaRes = await client.query(
+      `insert into chart_of_accounts (id, tenant_id, name)
+       values (gen_random_uuid(), $1, 'Default Chart of Accounts')
+       returning id`,
+      [tenantId]
+    );
+    const coaId = coaRes.rows[0].id as string;
+
+    // Create minimal accounts
+    const accountsData = [
+      { code: "1000", name: "Cash", type: "asset" },
+      { code: "1100", name: "Accounts Receivable", type: "asset" },
+      { code: "1200", name: "Inventory", type: "asset" },
+      { code: "2000", name: "Accounts Payable", type: "liability" },
+      { code: "2100", name: "Tax Payable", type: "liability" },
+      { code: "3000", name: "Retained Earnings", type: "equity" },
+      { code: "4000", name: "Sales Revenue", type: "income" },
+      { code: "5000", name: "Cost of Goods Sold", type: "expense" },
+      { code: "5100", name: "Operating Expenses", type: "expense" },
+    ];
+
+    const accountIds: Record<string, string> = {};
+    for (const acc of accountsData) {
+      const res = await client.query(
+        `insert into accounts (id, tenant_id, coa_id, code, name, type)
+         values (gen_random_uuid(), $1, $2, $3, $4, $5)
+         returning id`,
+        [tenantId, coaId, acc.code, acc.name, acc.type]
+      );
+      accountIds[acc.code] = res.rows[0].id as string;
+    }
+
     await client.query("COMMIT");
 
     console.log("Seeded:");
-    console.log({ tenantId, userId, adminActorId, systemActorId, roles: roleIds });
+    console.log({ tenantId, userId, adminActorId, systemActorId, roles: roleIds, coaId, accounts: accountIds });
   } catch (e) {
     await client.query("ROLLBACK");
     throw e;

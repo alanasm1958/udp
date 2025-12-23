@@ -388,3 +388,27 @@ export const entityLinks = pgTable(
     ),
   })
 );
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Posting Runs (idempotent posting tracking)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const postingRuns = pgTable(
+  "posting_runs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    transactionSetId: uuid("transaction_set_id").notNull().references(() => transactionSets.id),
+    status: text("status").notNull().default("started"), // started, succeeded, failed
+    journalEntryId: uuid("journal_entry_id").references(() => journalEntries.id),
+    startedByActorId: uuid("started_by_actor_id").notNull().references(() => actors.id),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    error: text("error"),
+    metadata: jsonb("metadata").notNull().default({}),
+  },
+  (t) => ({
+    // Prevent duplicate posting: only one started or succeeded run per transaction_set
+    uniqActiveRun: uniqueIndex("posting_runs_active_uniq").on(t.tenantId, t.transactionSetId),
+  })
+);
