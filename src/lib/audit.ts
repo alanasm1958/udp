@@ -42,7 +42,12 @@ export type AuditAction =
   | "product_identifier_created"
   | "warehouse_created"
   | "warehouse_updated"
-  | "storage_location_created";
+  | "storage_location_created"
+  // Inventory
+  | "inventory_movement_drafted"
+  | "inventory_movement_posted"
+  | "inventory_movement_reversed"
+  | "inventory_balance_updated";
 
 export interface AuditEventInput {
   tenantId: string;

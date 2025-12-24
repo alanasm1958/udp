@@ -20,6 +20,8 @@ export const transactionSetStatus = pgEnum("transaction_set_status", ["draft", "
 export const approvalStatus = pgEnum("approval_status", ["pending", "approved", "rejected"]);
 export const partyType = pgEnum("party_type", ["customer", "vendor", "employee", "bank", "government", "other"]);
 export const productType = pgEnum("product_type", ["good", "service"]);
+export const movementType = pgEnum("movement_type", ["receipt", "issue", "transfer", "adjustment"]);
+export const movementStatus = pgEnum("movement_status", ["draft", "posted", "reversed"]);
 export const accountType = pgEnum("account_type", [
   "asset",
   "liability",
@@ -670,5 +672,78 @@ export const storageLocations = pgTable(
       t.warehouseId,
       t.code
     ),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 6: Inventory Movements and Balances
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const inventoryMovements = pgTable(
+  "inventory_movements",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    transactionSetId: uuid("transaction_set_id").notNull().references(() => transactionSets.id),
+    movementType: movementType("movement_type").notNull(),
+    movementStatus: movementStatus("movement_status").notNull().default("draft"),
+    movementDate: date("movement_date").notNull(),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    fromWarehouseId: uuid("from_warehouse_id").references(() => warehouses.id),
+    fromLocationId: uuid("from_location_id").references(() => storageLocations.id),
+    toWarehouseId: uuid("to_warehouse_id").references(() => warehouses.id),
+    toLocationId: uuid("to_location_id").references(() => storageLocations.id),
+    quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull(),
+    uomId: uuid("uom_id").references(() => uoms.id),
+    unitCost: numeric("unit_cost", { precision: 18, scale: 6 }),
+    reference: text("reference"),
+    documentId: uuid("document_id").references(() => documents.id),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTxSet: index("inventory_movements_tenant_txset_idx").on(t.tenantId, t.transactionSetId),
+    idxProduct: index("inventory_movements_tenant_product_idx").on(t.tenantId, t.productId),
+    idxToWarehouse: index("inventory_movements_tenant_to_wh_idx").on(t.tenantId, t.toWarehouseId, t.toLocationId),
+    idxFromWarehouse: index("inventory_movements_tenant_from_wh_idx").on(t.tenantId, t.fromWarehouseId, t.fromLocationId),
+  })
+);
+
+export const inventoryBalances = pgTable(
+  "inventory_balances",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    warehouseId: uuid("warehouse_id").notNull().references(() => warehouses.id),
+    locationId: uuid("location_id").references(() => storageLocations.id),
+    onHand: numeric("on_hand", { precision: 18, scale: 6 }).notNull().default("0"),
+    reserved: numeric("reserved", { precision: 18, scale: 6 }).notNull().default("0"),
+    available: numeric("available", { precision: 18, scale: 6 }).notNull().default("0"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqBalance: uniqueIndex("inventory_balances_uniq").on(
+      t.tenantId,
+      t.productId,
+      t.warehouseId,
+      t.locationId
+    ),
+  })
+);
+
+export const inventoryPostingLinks = pgTable(
+  "inventory_posting_links",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    transactionSetId: uuid("transaction_set_id").notNull().references(() => transactionSets.id),
+    journalEntryId: uuid("journal_entry_id").notNull().references(() => journalEntries.id),
+    movementId: uuid("movement_id").notNull().references(() => inventoryMovements.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTxSet: index("inventory_posting_links_tenant_txset_idx").on(t.tenantId, t.transactionSetId),
+    uniqLink: uniqueIndex("inventory_posting_links_uniq").on(t.tenantId, t.journalEntryId, t.movementId),
   })
 );
