@@ -64,7 +64,17 @@ export type AuditAction =
   | "kpi_definition_created"
   | "kpi_definition_updated"
   | "kpi_target_created"
-  | "kpi_measurement_created";
+  | "kpi_measurement_created"
+  // Commercial - Sales
+  | "sales_doc_created"
+  | "sales_doc_updated"
+  | "sales_doc_line_created"
+  | "sales_doc_line_updated"
+  // Commercial - Procurement
+  | "purchase_doc_created"
+  | "purchase_doc_updated"
+  | "purchase_doc_line_created"
+  | "purchase_doc_line_updated";
 
 export interface AuditEventInput {
   tenantId: string;

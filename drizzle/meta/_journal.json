@@ -57,6 +57,13 @@
       "when": 1766585478381,
       "tag": "0007_silky_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1766586620910,
+      "tag": "0008_motionless_angel",
+      "breakpoints": true
     }
   ]
 }

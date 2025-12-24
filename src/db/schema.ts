@@ -957,3 +957,121 @@ export const kpiMeasurements = pgTable(
     ),
   })
 );
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 8: Commercial Documents (Sales + Procurement) - Non-posting
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const salesDocs = pgTable(
+  "sales_docs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    docType: text("doc_type").notNull(), // quote, order, invoice, credit_note, debit_note
+    docNumber: text("doc_number").notNull(),
+    partyId: uuid("party_id").notNull().references(() => parties.id), // customer
+    docDate: date("doc_date").notNull(),
+    dueDate: date("due_date"),
+    currency: text("currency").notNull().default("USD"),
+    subtotal: numeric("subtotal", { precision: 18, scale: 6 }).notNull().default("0"),
+    discountAmount: numeric("discount_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    taxAmount: numeric("tax_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    totalAmount: numeric("total_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    status: text("status").notNull().default("draft"), // draft, issued, approved, partially_fulfilled, fulfilled, cancelled
+    notes: text("notes"),
+    metadata: jsonb("metadata"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqDocNumber: uniqueIndex("sales_docs_tenant_docnumber_uniq").on(t.tenantId, t.docNumber),
+    idxParty: index("sales_docs_tenant_party_idx").on(t.tenantId, t.partyId),
+    idxStatus: index("sales_docs_tenant_status_idx").on(t.tenantId, t.status),
+  })
+);
+
+export const salesDocLines = pgTable(
+  "sales_doc_lines",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    salesDocId: uuid("sales_doc_id").notNull().references(() => salesDocs.id),
+    lineNo: integer("line_no").notNull(),
+    productId: uuid("product_id").references(() => products.id),
+    description: text("description").notNull(),
+    quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull().default("1"),
+    uomId: uuid("uom_id").references(() => uoms.id),
+    unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).notNull().default("0"),
+    discountPercent: numeric("discount_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    discountAmount: numeric("discount_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    taxCategoryId: uuid("tax_category_id").references(() => taxCategories.id),
+    taxAmount: numeric("tax_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    lineTotal: numeric("line_total", { precision: 18, scale: 6 }).notNull().default("0"),
+    metadata: jsonb("metadata"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqLine: uniqueIndex("sales_doc_lines_tenant_doc_line_uniq").on(t.tenantId, t.salesDocId, t.lineNo),
+    idxDoc: index("sales_doc_lines_tenant_doc_idx").on(t.tenantId, t.salesDocId),
+  })
+);
+
+export const purchaseDocs = pgTable(
+  "purchase_docs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    docType: text("doc_type").notNull(), // rfq, order, invoice, credit_note, debit_note
+    docNumber: text("doc_number").notNull(),
+    partyId: uuid("party_id").notNull().references(() => parties.id), // vendor
+    docDate: date("doc_date").notNull(),
+    dueDate: date("due_date"),
+    currency: text("currency").notNull().default("USD"),
+    subtotal: numeric("subtotal", { precision: 18, scale: 6 }).notNull().default("0"),
+    discountAmount: numeric("discount_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    taxAmount: numeric("tax_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    totalAmount: numeric("total_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    status: text("status").notNull().default("draft"), // draft, issued, approved, partially_fulfilled, fulfilled, cancelled
+    notes: text("notes"),
+    metadata: jsonb("metadata"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqDocNumber: uniqueIndex("purchase_docs_tenant_docnumber_uniq").on(t.tenantId, t.docNumber),
+    idxParty: index("purchase_docs_tenant_party_idx").on(t.tenantId, t.partyId),
+    idxStatus: index("purchase_docs_tenant_status_idx").on(t.tenantId, t.status),
+  })
+);
+
+export const purchaseDocLines = pgTable(
+  "purchase_doc_lines",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    purchaseDocId: uuid("purchase_doc_id").notNull().references(() => purchaseDocs.id),
+    lineNo: integer("line_no").notNull(),
+    productId: uuid("product_id").references(() => products.id),
+    description: text("description").notNull(),
+    quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull().default("1"),
+    uomId: uuid("uom_id").references(() => uoms.id),
+    unitPrice: numeric("unit_price", { precision: 18, scale: 6 }).notNull().default("0"),
+    discountPercent: numeric("discount_percent", { precision: 5, scale: 2 }).notNull().default("0"),
+    discountAmount: numeric("discount_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    taxCategoryId: uuid("tax_category_id").references(() => taxCategories.id),
+    taxAmount: numeric("tax_amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    lineTotal: numeric("line_total", { precision: 18, scale: 6 }).notNull().default("0"),
+    metadata: jsonb("metadata"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqLine: uniqueIndex("purchase_doc_lines_tenant_doc_line_uniq").on(t.tenantId, t.purchaseDocId, t.lineNo),
+    idxDoc: index("purchase_doc_lines_tenant_doc_idx").on(t.tenantId, t.purchaseDocId),
+  })
+);
