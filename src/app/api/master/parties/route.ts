@@ -8,7 +8,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { parties, partyProfiles, partyIdentifiers } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, ilike, or, sql } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
   getUserIdFromHeaders,
@@ -77,18 +77,51 @@ interface PartyResponse {
 
 /**
  * GET /api/master/parties
- * List all parties for the tenant
+ * List parties for the tenant with optional filters
+ * Query params: type, q (search name/code), limit (default 50, max 200)
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     const tenantId = requireTenantIdFromHeaders(req);
+    const url = new URL(req.url);
+
+    // Parse query params
+    const typeFilter = url.searchParams.get("type");
+    const searchQuery = url.searchParams.get("q");
+    const limitParam = url.searchParams.get("limit");
+    const limit = Math.min(Math.max(parseInt(limitParam || "50", 10) || 50, 1), 200);
+
+    // Build conditions
+    const conditions = [eq(parties.tenantId, tenantId)];
+
+    if (typeFilter) {
+      conditions.push(eq(parties.type, typeFilter as typeof parties.type.enumValues[number]));
+    }
+
+    if (searchQuery) {
+      const searchPattern = `%${searchQuery}%`;
+      conditions.push(
+        or(
+          ilike(parties.name, searchPattern),
+          ilike(parties.code, searchPattern)
+        )!
+      );
+    }
 
     const partyList = await db
-      .select()
+      .select({
+        id: parties.id,
+        partyType: parties.type,
+        displayName: parties.name,
+        code: parties.code,
+        status: sql<string>`CASE WHEN ${parties.isActive} THEN 'active' ELSE 'inactive' END`,
+        createdAt: parties.createdAt,
+      })
       .from(parties)
-      .where(eq(parties.tenantId, tenantId));
+      .where(and(...conditions))
+      .limit(limit);
 
-    return NextResponse.json({ parties: partyList });
+    return NextResponse.json({ items: partyList });
   } catch (error) {
     if (error instanceof TenantError) {
       return NextResponse.json({ error: error.message }, { status: error.statusCode });
