@@ -10,6 +10,7 @@ import {
   jsonb,
   date,
   uniqueIndex,
+  index,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -18,6 +19,7 @@ export const actorType = pgEnum("actor_type", ["user", "system", "connector"]);
 export const transactionSetStatus = pgEnum("transaction_set_status", ["draft", "review", "posted"]);
 export const approvalStatus = pgEnum("approval_status", ["pending", "approved", "rejected"]);
 export const partyType = pgEnum("party_type", ["customer", "vendor", "employee", "bank", "government", "other"]);
+export const productType = pgEnum("product_type", ["good", "service"]);
 export const accountType = pgEnum("account_type", [
   "asset",
   "liability",
@@ -536,6 +538,137 @@ export const entityDimensions = pgTable(
       t.entityType,
       t.entityId,
       t.dimensionValueId
+    ),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 5: Master Data - Products and Warehouses
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const uoms = pgTable(
+  "uoms",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("uoms_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const taxCategories = pgTable(
+  "tax_categories",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    metadata: jsonb("metadata").notNull().default({}),
+    status: text("status").notNull().default("active"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("tax_categories_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const products = pgTable(
+  "products",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    sku: text("sku"),
+    name: text("name").notNull(),
+    type: productType("type").notNull(),
+    status: text("status").notNull().default("active"),
+    description: text("description"),
+    defaultUomId: uuid("default_uom_id").references(() => uoms.id),
+    taxCategoryId: uuid("tax_category_id").references(() => taxCategories.id),
+    defaultSalesPrice: numeric("default_sales_price", { precision: 18, scale: 6 }).notNull().default("0"),
+    defaultPurchaseCost: numeric("default_purchase_cost", { precision: 18, scale: 6 }).notNull().default("0"),
+    preferredVendorPartyId: uuid("preferred_vendor_party_id").references(() => parties.id),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxType: index("products_tenant_type_idx").on(t.tenantId, t.type),
+    idxStatus: index("products_tenant_status_idx").on(t.tenantId, t.status),
+    idxName: index("products_tenant_name_idx").on(t.tenantId, t.name),
+    uniqSku: uniqueIndex("products_tenant_sku_uniq")
+      .on(t.tenantId, t.sku)
+      .where(sql`sku IS NOT NULL`),
+  })
+);
+
+export const productIdentifiers = pgTable(
+  "product_identifiers",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    productId: uuid("product_id").notNull().references(() => products.id),
+    identifierType: text("identifier_type").notNull(), // barcode, external, supplier, other
+    identifierValue: text("identifier_value").notNull(),
+    isPrimary: boolean("is_primary").notNull().default(false),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxProduct: index("product_identifiers_tenant_product_idx").on(t.tenantId, t.productId),
+    uniqTypeValue: uniqueIndex("product_identifiers_tenant_type_value_uniq").on(
+      t.tenantId,
+      t.identifierType,
+      t.identifierValue
+    ),
+  })
+);
+
+export const warehouses = pgTable(
+  "warehouses",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    address: jsonb("address").notNull().default({}),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("warehouses_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const storageLocations = pgTable(
+  "storage_locations",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    warehouseId: uuid("warehouse_id").notNull().references(() => warehouses.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxWarehouse: index("storage_locations_tenant_warehouse_idx").on(t.tenantId, t.warehouseId),
+    uniqCode: uniqueIndex("storage_locations_tenant_warehouse_code_uniq").on(
+      t.tenantId,
+      t.warehouseId,
+      t.code
     ),
   })
 );

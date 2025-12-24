@@ -33,7 +33,16 @@ export type AuditAction =
   | "dimension_value_created"
   | "dimension_value_updated"
   | "entity_dimension_tagged"
-  | "entity_dimension_untagged";
+  | "entity_dimension_untagged"
+  // Master data - Products and Warehouses
+  | "uom_created"
+  | "tax_category_created"
+  | "product_created"
+  | "product_updated"
+  | "product_identifier_created"
+  | "warehouse_created"
+  | "warehouse_updated"
+  | "storage_location_created";
 
 export interface AuditEventInput {
   tenantId: string;
