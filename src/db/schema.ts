@@ -17,6 +17,7 @@ import { sql } from "drizzle-orm";
 export const actorType = pgEnum("actor_type", ["user", "system", "connector"]);
 export const transactionSetStatus = pgEnum("transaction_set_status", ["draft", "review", "posted"]);
 export const approvalStatus = pgEnum("approval_status", ["pending", "approved", "rejected"]);
+export const partyType = pgEnum("party_type", ["customer", "vendor", "employee", "bank", "government", "other"]);
 export const accountType = pgEnum("account_type", [
   "asset",
   "liability",
@@ -410,5 +411,131 @@ export const postingRuns = pgTable(
   (t) => ({
     // Prevent duplicate posting: only one started or succeeded run per transaction_set
     uniqActiveRun: uniqueIndex("posting_runs_active_uniq").on(t.tenantId, t.transactionSetId),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 4: Master Data - Parties
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const parties = pgTable(
+  "parties",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    type: partyType("type").notNull(),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    isActive: boolean("is_active").notNull().default(true),
+    defaultCurrency: text("default_currency"),
+    notes: text("notes"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("parties_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const partyProfiles = pgTable("party_profiles", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  partyId: uuid("party_id").notNull().references(() => parties.id),
+  profileType: text("profile_type").notNull(), // billing, shipping, legal, contact
+  data: jsonb("data").notNull().default({}),
+  createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const partyIdentifiers = pgTable(
+  "party_identifiers",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    partyId: uuid("party_id").notNull().references(() => parties.id),
+    identifierType: text("identifier_type").notNull(), // tax_id, vat, duns, lei, internal_erp
+    identifierValue: text("identifier_value").notNull(),
+    issuingAuthority: text("issuing_authority"),
+    validFrom: date("valid_from"),
+    validTo: date("valid_to"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqTypeValue: uniqueIndex("party_identifiers_tenant_type_value_uniq").on(
+      t.tenantId,
+      t.partyId,
+      t.identifierType,
+      t.identifierValue
+    ),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 4: Master Data - Dimensions
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const dimensionDefinitions = pgTable(
+  "dimension_definitions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(), // cost_center, department, project, region
+    name: text("name").notNull(),
+    description: text("description"),
+    isHierarchical: boolean("is_hierarchical").notNull().default(false),
+    isActive: boolean("is_active").notNull().default(true),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("dimension_definitions_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const dimensionValues = pgTable(
+  "dimension_values",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    dimensionDefinitionId: uuid("dimension_definition_id").notNull().references(() => dimensionDefinitions.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    parentValueId: uuid("parent_value_id"),
+    isActive: boolean("is_active").notNull().default(true),
+    validFrom: date("valid_from"),
+    validTo: date("valid_to"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("dimension_values_tenant_dim_code_uniq").on(
+      t.tenantId,
+      t.dimensionDefinitionId,
+      t.code
+    ),
+  })
+);
+
+export const entityDimensions = pgTable(
+  "entity_dimensions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    entityType: text("entity_type").notNull(), // party, account, journal_entry, etc.
+    entityId: uuid("entity_id").notNull(),
+    dimensionValueId: uuid("dimension_value_id").notNull().references(() => dimensionValues.id),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqEntityDim: uniqueIndex("entity_dimensions_uniq").on(
+      t.tenantId,
+      t.entityType,
+      t.entityId,
+      t.dimensionValueId
+    ),
   })
 );

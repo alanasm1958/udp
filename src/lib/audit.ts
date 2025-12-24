@@ -21,7 +21,19 @@ export type AuditAction =
   | "journal_entry_created"
   | "journal_reversal_requested"
   | "journal_reversed"
-  | "reversal_created";
+  | "reversal_created"
+  // Master data - Parties
+  | "party_created"
+  | "party_updated"
+  | "party_profile_created"
+  | "party_profile_updated"
+  | "party_identifier_created"
+  // Master data - Dimensions
+  | "dimension_definition_created"
+  | "dimension_value_created"
+  | "dimension_value_updated"
+  | "entity_dimension_tagged"
+  | "entity_dimension_untagged";
 
 export interface AuditEventInput {
   tenantId: string;
