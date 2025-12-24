@@ -747,3 +747,213 @@ export const inventoryPostingLinks = pgTable(
     uniqLink: uniqueIndex("inventory_posting_links_uniq").on(t.tenantId, t.journalEntryId, t.movementId),
   })
 );
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 7: Strategy + Budgets
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const budgets = pgTable(
+  "budgets",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    budgetType: text("budget_type").notNull(), // marketing, sales, opex, capex, payroll, project
+    currency: text("currency").notNull().default("USD"),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    status: text("status").notNull().default("active"), // active, archived
+    notes: text("notes"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("budgets_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const budgetVersions = pgTable(
+  "budget_versions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    budgetId: uuid("budget_id").notNull().references(() => budgets.id),
+    versionNo: integer("version_no").notNull(),
+    label: text("label").notNull(), // baseline, revised, forecast, actual_plan
+    status: text("status").notNull().default("active"), // active, locked, archived
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqVersion: uniqueIndex("budget_versions_tenant_budget_version_uniq").on(
+      t.tenantId,
+      t.budgetId,
+      t.versionNo
+    ),
+  })
+);
+
+export const budgetLines = pgTable(
+  "budget_lines",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    budgetVersionId: uuid("budget_version_id").notNull().references(() => budgetVersions.id),
+    lineNo: integer("line_no").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull().default("0"),
+    currency: text("currency").notNull().default("USD"),
+    startDate: date("start_date"),
+    endDate: date("end_date"),
+    accountId: uuid("account_id").references(() => accounts.id), // optional - planning can exist without COA mapping
+    partyId: uuid("party_id").references(() => parties.id), // optional - vendor/customer budget owner
+    productId: uuid("product_id").references(() => products.id), // optional - product line budgets
+    metadata: jsonb("metadata"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqLine: uniqueIndex("budget_lines_tenant_version_line_uniq").on(
+      t.tenantId,
+      t.budgetVersionId,
+      t.lineNo
+    ),
+  })
+);
+
+export const budgetLineDimensions = pgTable(
+  "budget_line_dimensions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    budgetLineId: uuid("budget_line_id").notNull().references(() => budgetLines.id),
+    dimensionValueId: uuid("dimension_value_id").notNull().references(() => dimensionValues.id),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqDim: uniqueIndex("budget_line_dimensions_uniq").on(
+      t.tenantId,
+      t.budgetLineId,
+      t.dimensionValueId
+    ),
+  })
+);
+
+export const objectives = pgTable(
+  "objectives",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    ownerPartyId: uuid("owner_party_id").references(() => parties.id),
+    status: text("status").notNull().default("active"), // active, archived, completed
+    startDate: date("start_date"),
+    endDate: date("end_date"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("objectives_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const initiatives = pgTable(
+  "initiatives",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    objectiveId: uuid("objective_id").references(() => objectives.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: text("status").notNull().default("active"), // active, paused, completed, archived
+    startDate: date("start_date"),
+    endDate: date("end_date"),
+    ownerPartyId: uuid("owner_party_id").references(() => parties.id),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("initiatives_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const kpiDefinitions = pgTable(
+  "kpi_definitions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    unit: text("unit").notNull(), // %, USD, count, ratio, days
+    direction: text("direction").notNull(), // increase, decrease, maintain
+    status: text("status").notNull().default("active"), // active, archived
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("kpi_definitions_tenant_code_uniq").on(t.tenantId, t.code),
+  })
+);
+
+export const kpiTargets = pgTable(
+  "kpi_targets",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    kpiDefinitionId: uuid("kpi_definition_id").notNull().references(() => kpiDefinitions.id),
+    objectiveId: uuid("objective_id").references(() => objectives.id),
+    initiativeId: uuid("initiative_id").references(() => initiatives.id),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    targetValue: numeric("target_value", { precision: 18, scale: 6 }).notNull(),
+    status: text("status").notNull().default("active"), // active, archived
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqTarget: uniqueIndex("kpi_targets_uniq").on(
+      t.tenantId,
+      t.kpiDefinitionId,
+      t.periodStart,
+      t.periodEnd,
+      t.objectiveId,
+      t.initiativeId
+    ),
+  })
+);
+
+export const kpiMeasurements = pgTable(
+  "kpi_measurements",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    kpiDefinitionId: uuid("kpi_definition_id").notNull().references(() => kpiDefinitions.id),
+    objectiveId: uuid("objective_id").references(() => objectives.id),
+    initiativeId: uuid("initiative_id").references(() => initiatives.id),
+    measuredAt: timestamp("measured_at", { withTimezone: true }).notNull(),
+    value: numeric("value", { precision: 18, scale: 6 }).notNull(),
+    source: text("source"), // manual, import, system, integration
+    notes: text("notes"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxKpiMeasured: index("kpi_measurements_tenant_kpi_measured_idx").on(
+      t.tenantId,
+      t.kpiDefinitionId,
+      t.measuredAt
+    ),
+  })
+);

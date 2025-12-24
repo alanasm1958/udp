@@ -47,7 +47,24 @@ export type AuditAction =
   | "inventory_movement_drafted"
   | "inventory_movement_posted"
   | "inventory_movement_reversed"
-  | "inventory_balance_updated";
+  | "inventory_balance_updated"
+  // Strategy - Budgets
+  | "budget_created"
+  | "budget_updated"
+  | "budget_version_created"
+  | "budget_line_created"
+  | "budget_line_updated"
+  // Strategy - Objectives
+  | "objective_created"
+  | "objective_updated"
+  // Strategy - Initiatives
+  | "initiative_created"
+  | "initiative_updated"
+  // Strategy - KPIs
+  | "kpi_definition_created"
+  | "kpi_definition_updated"
+  | "kpi_target_created"
+  | "kpi_measurement_created";
 
 export interface AuditEventInput {
   tenantId: string;

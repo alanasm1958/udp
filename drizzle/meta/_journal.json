@@ -50,6 +50,13 @@
       "when": 1766570924418,
       "tag": "0006_wooden_gamora",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1766585478381,
+      "tag": "0007_silky_masque",
+      "breakpoints": true
     }
   ]
 }
