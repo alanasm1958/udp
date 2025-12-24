@@ -902,9 +902,10 @@ export async function postInventoryMovements(
     // 4. Create journal entry if any movement has unit cost
     let journalEntryId: string | null = null;
 
-    _movementsWithCost = movements.filter(
+    const _movementsWithCost = movements.filter(
       (m) => m.unitCost !== null && parseFloat(m.unitCost) > 0
     );
+
 
     // Also check if product has default_purchase_cost for receipts/adjustments
     const movementsNeedingCost: Array<{
