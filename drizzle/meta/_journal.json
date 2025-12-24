@@ -64,6 +64,13 @@
       "when": 1766586620910,
       "tag": "0008_motionless_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1766605993790,
+      "tag": "0009_certain_squirrel_girl",
+      "breakpoints": true
     }
   ]
 }

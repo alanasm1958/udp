@@ -1075,3 +1075,32 @@ export const purchaseDocLines = pgTable(
     idxDoc: index("purchase_doc_lines_tenant_doc_idx").on(t.tenantId, t.purchaseDocId),
   })
 );
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 9A: Sales Fulfillment Links
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const salesFulfillments = pgTable(
+  "sales_fulfillments",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    salesDocId: uuid("sales_doc_id").notNull().references(() => salesDocs.id),
+    salesDocLineId: uuid("sales_doc_line_id").notNull().references(() => salesDocLines.id),
+    movementId: uuid("movement_id").notNull().references(() => inventoryMovements.id),
+    fulfillmentType: text("fulfillment_type").notNull(), // reserve, ship, unreserve, return
+    quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull(),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqFulfillment: uniqueIndex("sales_fulfillments_uniq").on(
+      t.tenantId,
+      t.salesDocLineId,
+      t.movementId,
+      t.fulfillmentType
+    ),
+    idxDoc: index("sales_fulfillments_tenant_doc_idx").on(t.tenantId, t.salesDocId),
+    idxLine: index("sales_fulfillments_tenant_line_idx").on(t.tenantId, t.salesDocLineId),
+  })
+);
