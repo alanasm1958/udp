@@ -1,12 +1,13 @@
 /**
  * /api/sales/docs/[id]
  *
+ * GET: Get a single sales document with payment status
  * PATCH: Update an existing sales document
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { salesDocs } from "@/db/schema";
+import { salesDocs, parties } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -16,6 +17,77 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { getDocAllocatedTotal, computePaymentStatus } from "@/lib/arAp";
+
+/**
+ * GET /api/sales/docs/[id]
+ * Get a single sales document with payment status
+ */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  try {
+    const tenantId = requireTenantIdFromHeaders(req);
+    const { id } = await params;
+
+    const [doc] = await db
+      .select({
+        id: salesDocs.id,
+        docType: salesDocs.docType,
+        docNumber: salesDocs.docNumber,
+        partyId: salesDocs.partyId,
+        partyName: parties.name,
+        docDate: salesDocs.docDate,
+        dueDate: salesDocs.dueDate,
+        currency: salesDocs.currency,
+        subtotal: salesDocs.subtotal,
+        discountAmount: salesDocs.discountAmount,
+        taxAmount: salesDocs.taxAmount,
+        totalAmount: salesDocs.totalAmount,
+        status: salesDocs.status,
+        notes: salesDocs.notes,
+        metadata: salesDocs.metadata,
+        createdAt: salesDocs.createdAt,
+        updatedAt: salesDocs.updatedAt,
+      })
+      .from(salesDocs)
+      .leftJoin(parties, eq(salesDocs.partyId, parties.id))
+      .where(and(eq(salesDocs.tenantId, tenantId), eq(salesDocs.id, id)))
+      .limit(1);
+
+    if (!doc) {
+      return NextResponse.json({ error: "Sales document not found" }, { status: 404 });
+    }
+
+    // Calculate payment status for posted invoices
+    let allocatedAmount = 0;
+    let remainingAmount = parseFloat(doc.totalAmount);
+    let paymentStatus: "unpaid" | "partial" | "paid" | null = null;
+
+    if (doc.docType === "invoice" && doc.status === "posted") {
+      allocatedAmount = await getDocAllocatedTotal(tenantId, "sales_doc", id);
+      remainingAmount = parseFloat(doc.totalAmount) - allocatedAmount;
+      paymentStatus = computePaymentStatus(parseFloat(doc.totalAmount), remainingAmount);
+    }
+
+    return NextResponse.json({
+      ...doc,
+      allocatedAmount,
+      remainingAmount,
+      paymentStatus,
+    });
+  } catch (error) {
+    if (error instanceof TenantError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("GET /api/sales/docs/[id] error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
 
 interface UpdateSalesDocRequest {
   docDate?: string;

@@ -1,12 +1,13 @@
 /**
  * /api/procurement/docs/[id]
  *
+ * GET: Get a single purchase document with payment status
  * PATCH: Update an existing purchase document
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { purchaseDocs } from "@/db/schema";
+import { purchaseDocs, parties } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -16,6 +17,77 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { getDocAllocatedTotal, computePaymentStatus } from "@/lib/arAp";
+
+/**
+ * GET /api/procurement/docs/[id]
+ * Get a single purchase document with payment status
+ */
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  try {
+    const tenantId = requireTenantIdFromHeaders(req);
+    const { id } = await params;
+
+    const [doc] = await db
+      .select({
+        id: purchaseDocs.id,
+        docType: purchaseDocs.docType,
+        docNumber: purchaseDocs.docNumber,
+        partyId: purchaseDocs.partyId,
+        partyName: parties.name,
+        docDate: purchaseDocs.docDate,
+        dueDate: purchaseDocs.dueDate,
+        currency: purchaseDocs.currency,
+        subtotal: purchaseDocs.subtotal,
+        discountAmount: purchaseDocs.discountAmount,
+        taxAmount: purchaseDocs.taxAmount,
+        totalAmount: purchaseDocs.totalAmount,
+        status: purchaseDocs.status,
+        notes: purchaseDocs.notes,
+        metadata: purchaseDocs.metadata,
+        createdAt: purchaseDocs.createdAt,
+        updatedAt: purchaseDocs.updatedAt,
+      })
+      .from(purchaseDocs)
+      .leftJoin(parties, eq(purchaseDocs.partyId, parties.id))
+      .where(and(eq(purchaseDocs.tenantId, tenantId), eq(purchaseDocs.id, id)))
+      .limit(1);
+
+    if (!doc) {
+      return NextResponse.json({ error: "Purchase document not found" }, { status: 404 });
+    }
+
+    // Calculate payment status for posted invoices
+    let allocatedAmount = 0;
+    let remainingAmount = parseFloat(doc.totalAmount);
+    let paymentStatus: "unpaid" | "partial" | "paid" | null = null;
+
+    if (doc.docType === "invoice" && doc.status === "posted") {
+      allocatedAmount = await getDocAllocatedTotal(tenantId, "purchase_doc", id);
+      remainingAmount = parseFloat(doc.totalAmount) - allocatedAmount;
+      paymentStatus = computePaymentStatus(parseFloat(doc.totalAmount), remainingAmount);
+    }
+
+    return NextResponse.json({
+      ...doc,
+      allocatedAmount,
+      remainingAmount,
+      paymentStatus,
+    });
+  } catch (error) {
+    if (error instanceof TenantError) {
+      return NextResponse.json({ error: error.message }, { status: error.statusCode });
+    }
+    console.error("GET /api/procurement/docs/[id] error:", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
 
 interface UpdatePurchaseDocRequest {
   docDate?: string;
