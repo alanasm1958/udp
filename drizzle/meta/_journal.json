@@ -78,6 +78,13 @@
       "when": 1766651626204,
       "tag": "0010_melted_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1766653315742,
+      "tag": "0011_bent_the_executioner",
+      "breakpoints": true
     }
   ]
 }

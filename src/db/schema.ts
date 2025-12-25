@@ -1137,3 +1137,39 @@ export const purchaseReceipts = pgTable(
     idxMovement: index("purchase_receipts_movement_idx").on(t.movementId),
   })
 );
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 9C: Commercial Document Posting Links
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const salesPostingLinks = pgTable(
+  "sales_posting_links",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    salesDocId: uuid("sales_doc_id").notNull().references(() => salesDocs.id),
+    journalEntryId: uuid("journal_entry_id").notNull().references(() => journalEntries.id),
+    transactionSetId: uuid("transaction_set_id").notNull().references(() => transactionSets.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqSalesDoc: uniqueIndex("sales_posting_links_tenant_doc_uniq").on(t.tenantId, t.salesDocId),
+    idxJournal: index("sales_posting_links_journal_idx").on(t.journalEntryId),
+  })
+);
+
+export const purchasePostingLinks = pgTable(
+  "purchase_posting_links",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    purchaseDocId: uuid("purchase_doc_id").notNull().references(() => purchaseDocs.id),
+    journalEntryId: uuid("journal_entry_id").notNull().references(() => journalEntries.id),
+    transactionSetId: uuid("transaction_set_id").notNull().references(() => transactionSets.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPurchaseDoc: uniqueIndex("purchase_posting_links_tenant_doc_uniq").on(t.tenantId, t.purchaseDocId),
+    idxJournal: index("purchase_posting_links_journal_idx").on(t.journalEntryId),
+  })
+);
