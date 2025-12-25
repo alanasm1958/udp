@@ -2212,3 +2212,282 @@ export async function postPayment(ctx: PaymentPostingContext): Promise<PaymentPo
     };
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Payment Void
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export interface VoidPaymentInput {
+  tenantId: string;
+  actorId: string;
+  paymentId: string;
+  reason?: string;
+}
+
+export interface VoidPaymentResult {
+  success: boolean;
+  paymentId: string;
+  status: "void" | "draft" | "posted";
+  idempotent: boolean;
+  originalJournalEntryId?: string;
+  reversalJournalEntryId?: string;
+  error?: string;
+}
+
+/**
+ * Void a payment.
+ *
+ * For draft payments: simply sets status to void.
+ * For posted payments: creates a reversal journal entry and then sets status to void.
+ *
+ * THIS FUNCTION MAY WRITE TO LEDGER TABLES (journal_entries, journal_lines) for posted payment reversals.
+ */
+export async function voidPayment(input: VoidPaymentInput): Promise<VoidPaymentResult> {
+  const { tenantId, actorId, paymentId, reason } = input;
+
+  return await db.transaction(async (tx) => {
+    // 1. Load payment
+    const [payment] = await tx
+      .select()
+      .from(payments)
+      .where(
+        and(
+          eq(payments.id, paymentId),
+          eq(payments.tenantId, tenantId)
+        )
+      )
+      .limit(1);
+
+    if (!payment) {
+      return {
+        success: false,
+        paymentId,
+        status: "draft" as const,
+        idempotent: false,
+        error: "Payment not found",
+      };
+    }
+
+    // 2. Idempotency: if already void, return success
+    if (payment.status === "void") {
+      return {
+        success: true,
+        paymentId,
+        status: "void" as const,
+        idempotent: true,
+      };
+    }
+
+    // 3. Check for allocations
+    const allocations = await tx
+      .select({ id: paymentAllocations.id })
+      .from(paymentAllocations)
+      .where(
+        and(
+          eq(paymentAllocations.tenantId, tenantId),
+          eq(paymentAllocations.paymentId, paymentId)
+        )
+      )
+      .limit(1);
+
+    if (allocations.length > 0) {
+      return {
+        success: false,
+        paymentId,
+        status: payment.status as "draft" | "posted",
+        idempotent: false,
+        error: "Payment has allocations. Unallocate before voiding.",
+      };
+    }
+
+    // 4. Handle draft payment - just set to void
+    if (payment.status === "draft") {
+      await tx
+        .update(payments)
+        .set({
+          status: "void",
+          updatedAt: sql`now()`,
+        })
+        .where(eq(payments.id, paymentId));
+
+      await logAuditEvent({
+        tenantId,
+        actorId,
+        entityType: "payment",
+        entityId: paymentId,
+        action: "payment_voided",
+        metadata: {
+          previousStatus: "draft",
+          reason: reason || "No reason provided",
+        },
+      });
+
+      return {
+        success: true,
+        paymentId,
+        status: "void" as const,
+        idempotent: false,
+      };
+    }
+
+    // 5. Handle posted payment - create reversal
+    if (payment.status === "posted") {
+      // Find the posting link to get original journal entry
+      const [postingLink] = await tx
+        .select({ journalEntryId: paymentPostingLinks.journalEntryId })
+        .from(paymentPostingLinks)
+        .where(
+          and(
+            eq(paymentPostingLinks.tenantId, tenantId),
+            eq(paymentPostingLinks.paymentId, paymentId)
+          )
+        )
+        .limit(1);
+
+      if (!postingLink || !postingLink.journalEntryId) {
+        return {
+          success: false,
+          paymentId,
+          status: "posted" as const,
+          idempotent: false,
+          error: "Payment is posted but has no posting link (journal entry missing).",
+        };
+      }
+
+      const originalJournalEntryId = postingLink.journalEntryId;
+
+      // Check if already reversed (idempotency for partial completion)
+      const existingReversal = await tx
+        .select({ reversalJournalEntryId: reversalLinks.reversalJournalEntryId })
+        .from(reversalLinks)
+        .where(
+          and(
+            eq(reversalLinks.tenantId, tenantId),
+            eq(reversalLinks.originalJournalEntryId, originalJournalEntryId)
+          )
+        )
+        .limit(1);
+
+      let reversalJournalEntryId: string;
+
+      if (existingReversal.length > 0) {
+        // Already reversed, use existing
+        reversalJournalEntryId = existingReversal[0].reversalJournalEntryId;
+      } else {
+        // Create reversal journal entry
+        // Fetch original journal lines
+        const originalLines = await tx
+          .select()
+          .from(journalLines)
+          .where(
+            and(
+              eq(journalLines.journalEntryId, originalJournalEntryId),
+              eq(journalLines.tenantId, tenantId)
+            )
+          )
+          .orderBy(asc(journalLines.lineNo));
+
+        if (originalLines.length === 0) {
+          return {
+            success: false,
+            paymentId,
+            status: "posted" as const,
+            idempotent: false,
+            error: "Original journal entry has no lines to reverse.",
+          };
+        }
+
+        // Create transaction set for reversal
+        const [reversalTxSet] = await tx
+          .insert(transactionSets)
+          .values({
+            tenantId,
+            status: "posted",
+            source: "payment_void",
+            createdByActorId: actorId,
+            businessDate: new Date().toISOString().split("T")[0],
+            notes: `Payment void reversal: ${payment.reference || paymentId}`,
+          })
+          .returning();
+
+        // Create reversal journal entry - THIS IS THE LEDGER WRITE
+        const [reversalEntry] = await tx
+          .insert(journalEntries)
+          .values({
+            tenantId,
+            postingDate: new Date().toISOString().split("T")[0],
+            memo: `Payment void reversal: ${payment.reference || paymentId}${reason ? ` - ${reason}` : ""}`,
+            sourceTransactionSetId: reversalTxSet.id,
+            postedByActorId: actorId,
+          })
+          .returning();
+
+        reversalJournalEntryId = reversalEntry.id;
+
+        // Create inverted journal lines - THIS IS THE LEDGER WRITE
+        await tx.insert(journalLines).values(
+          originalLines.map((line) => ({
+            tenantId,
+            journalEntryId: reversalEntry.id,
+            lineNo: line.lineNo,
+            accountId: line.accountId,
+            // Invert: debit becomes credit, credit becomes debit
+            debit: line.credit,
+            credit: line.debit,
+            description: line.description ? `Void reversal: ${line.description}` : "Void reversal",
+          }))
+        );
+
+        // Create reversal link
+        await tx.insert(reversalLinks).values({
+          tenantId,
+          originalJournalEntryId,
+          reversalJournalEntryId: reversalEntry.id,
+          reason: reason || "Payment voided",
+          createdByActorId: actorId,
+        });
+      }
+
+      // Set payment status to void
+      await tx
+        .update(payments)
+        .set({
+          status: "void",
+          updatedAt: sql`now()`,
+        })
+        .where(eq(payments.id, paymentId));
+
+      await logAuditEvent({
+        tenantId,
+        actorId,
+        entityType: "payment",
+        entityId: paymentId,
+        action: "payment_voided",
+        metadata: {
+          previousStatus: "posted",
+          reason: reason || "No reason provided",
+          originalJournalEntryId,
+          reversalJournalEntryId,
+        },
+      });
+
+      return {
+        success: true,
+        paymentId,
+        status: "void" as const,
+        idempotent: existingReversal.length > 0,
+        originalJournalEntryId,
+        reversalJournalEntryId,
+      };
+    }
+
+    // Unhandled status
+    return {
+      success: false,
+      paymentId,
+      status: payment.status as "draft" | "posted",
+      idempotent: false,
+      error: `Cannot void payment with status: ${payment.status}`,
+    };
+  });
+}
