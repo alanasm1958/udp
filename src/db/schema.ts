@@ -1181,7 +1181,7 @@ export const purchasePostingLinks = pgTable(
 export const paymentType = pgEnum("payment_type", ["receipt", "payment"]);
 export const paymentMethod = pgEnum("payment_method", ["cash", "bank"]);
 export const paymentStatus = pgEnum("payment_status", ["draft", "posted", "void"]);
-export const allocationTargetType = pgEnum("allocation_target_type", ["sales_doc", "purchase_doc"]);
+export const paymentAllocationTargetType = pgEnum("payment_allocation_target_type", ["sales_doc", "purchase_doc"]);
 
 export const payments = pgTable(
   "payments",
@@ -1190,13 +1190,15 @@ export const payments = pgTable(
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
     type: paymentType("type").notNull(),
     method: paymentMethod("method").notNull(),
+    status: paymentStatus("status").notNull().default("draft"),
     paymentDate: date("payment_date").notNull(),
     partyId: uuid("party_id").references(() => parties.id),
     currency: text("currency").notNull().default("USD"),
     amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
-    memo: text("memo"),
     reference: text("reference"),
-    status: paymentStatus("status").notNull().default("draft"),
+    memo: text("memo"),
+    cashAccountCode: text("cash_account_code").notNull().default("1000"),
+    bankAccountCode: text("bank_account_code").notNull().default("1020"),
     createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1204,8 +1206,8 @@ export const payments = pgTable(
   (t) => ({
     idxTenant: index("payments_tenant_idx").on(t.tenantId),
     idxParty: index("payments_tenant_party_idx").on(t.tenantId, t.partyId),
+    idxDate: index("payments_tenant_date_idx").on(t.tenantId, t.paymentDate),
     idxStatus: index("payments_tenant_status_idx").on(t.tenantId, t.status),
-    idxType: index("payments_tenant_type_idx").on(t.tenantId, t.type),
   })
 );
 
@@ -1215,7 +1217,7 @@ export const paymentAllocations = pgTable(
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
     paymentId: uuid("payment_id").notNull().references(() => payments.id),
-    targetType: allocationTargetType("target_type").notNull(),
+    targetType: paymentAllocationTargetType("target_type").notNull(),
     targetId: uuid("target_id").notNull(),
     amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
     createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
@@ -1223,7 +1225,7 @@ export const paymentAllocations = pgTable(
   },
   (t) => ({
     uniqAllocation: uniqueIndex("payment_allocations_uniq").on(t.tenantId, t.paymentId, t.targetType, t.targetId),
-    idxPayment: index("payment_allocations_payment_idx").on(t.paymentId),
+    idxPayment: index("payment_allocations_tenant_payment_idx").on(t.tenantId, t.paymentId),
   })
 );
 

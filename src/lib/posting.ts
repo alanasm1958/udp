@@ -1904,8 +1904,6 @@ export interface PaymentPostingContext {
   actorId: string;
   paymentId: string;
   memo?: string;
-  cashAccountCode?: string;
-  bankAccountCode?: string;
   arAccountCode?: string;
   apAccountCode?: string;
 }
@@ -2030,14 +2028,12 @@ export async function postPayment(ctx: PaymentPostingContext): Promise<PaymentPo
   }
 
   try {
-    // 5. Resolve accounts
-    const cashAccountCode = ctx.cashAccountCode || "1000";
-    const bankAccountCode = ctx.bankAccountCode || "1020";
+    // 5. Resolve accounts - use codes stored on the payment record
+    const cashBankAccountCode = payment.method === "cash"
+      ? payment.cashAccountCode
+      : payment.bankAccountCode;
     const arAccountCode = ctx.arAccountCode || "1100";
     const apAccountCode = ctx.apAccountCode || "2000";
-
-    // Determine cash/bank account based on payment method
-    const cashBankAccountCode = payment.method === "cash" ? cashAccountCode : bankAccountCode;
 
     const [cashBankAccount] = await db
       .select({ id: accounts.id, code: accounts.code, name: accounts.name })
