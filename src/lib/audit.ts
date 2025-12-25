@@ -81,7 +81,12 @@ export type AuditAction =
   | "purchase_receipt_created"
   // Commercial - Document Posting
   | "sales_doc_posted"
-  | "purchase_doc_posted";
+  | "purchase_doc_posted"
+  // Finance - Payments
+  | "payment_created"
+  | "payment_updated"
+  | "payment_allocation_created"
+  | "payment_posted";
 
 export interface AuditEventInput {
   tenantId: string;

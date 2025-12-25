@@ -1173,3 +1173,72 @@ export const purchasePostingLinks = pgTable(
     idxJournal: index("purchase_posting_links_journal_idx").on(t.journalEntryId),
   })
 );
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 10: Payments
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const paymentType = pgEnum("payment_type", ["receipt", "payment"]);
+export const paymentMethod = pgEnum("payment_method", ["cash", "bank"]);
+export const paymentStatus = pgEnum("payment_status", ["draft", "posted", "void"]);
+export const allocationTargetType = pgEnum("allocation_target_type", ["sales_doc", "purchase_doc"]);
+
+export const payments = pgTable(
+  "payments",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    type: paymentType("type").notNull(),
+    method: paymentMethod("method").notNull(),
+    paymentDate: date("payment_date").notNull(),
+    partyId: uuid("party_id").references(() => parties.id),
+    currency: text("currency").notNull().default("USD"),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+    memo: text("memo"),
+    reference: text("reference"),
+    status: paymentStatus("status").notNull().default("draft"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("payments_tenant_idx").on(t.tenantId),
+    idxParty: index("payments_tenant_party_idx").on(t.tenantId, t.partyId),
+    idxStatus: index("payments_tenant_status_idx").on(t.tenantId, t.status),
+    idxType: index("payments_tenant_type_idx").on(t.tenantId, t.type),
+  })
+);
+
+export const paymentAllocations = pgTable(
+  "payment_allocations",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    paymentId: uuid("payment_id").notNull().references(() => payments.id),
+    targetType: allocationTargetType("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqAllocation: uniqueIndex("payment_allocations_uniq").on(t.tenantId, t.paymentId, t.targetType, t.targetId),
+    idxPayment: index("payment_allocations_payment_idx").on(t.paymentId),
+  })
+);
+
+export const paymentPostingLinks = pgTable(
+  "payment_posting_links",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    paymentId: uuid("payment_id").notNull().references(() => payments.id),
+    journalEntryId: uuid("journal_entry_id").notNull().references(() => journalEntries.id),
+    transactionSetId: uuid("transaction_set_id").references(() => transactionSets.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPayment: uniqueIndex("payment_posting_links_tenant_payment_uniq").on(t.tenantId, t.paymentId),
+    idxJournal: index("payment_posting_links_journal_idx").on(t.journalEntryId),
+  })
+);

@@ -36,6 +36,9 @@ import {
   purchaseDocs,
   purchaseDocLines,
   purchasePostingLinks,
+  payments,
+  paymentAllocations,
+  paymentPostingLinks,
 } from "@/db/schema";
 import { eq, and, sql, asc } from "drizzle-orm";
 import { logAuditEvent } from "./audit";
@@ -1884,6 +1887,328 @@ export async function postPurchaseDoc(ctx: PurchaseDocPostingContext): Promise<P
     return {
       success: false,
       purchaseDocId,
+      journalEntryId: null,
+      transactionSetId: null,
+      idempotent: false,
+      error: errorMessage,
+    };
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Payment Posting
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export interface PaymentPostingContext {
+  tenantId: string;
+  actorId: string;
+  paymentId: string;
+  memo?: string;
+  cashAccountCode?: string;
+  bankAccountCode?: string;
+  arAccountCode?: string;
+  apAccountCode?: string;
+}
+
+export interface PaymentPostingResult {
+  success: boolean;
+  paymentId: string;
+  journalEntryId: string | null;
+  transactionSetId: string | null;
+  idempotent: boolean;
+  error?: string;
+}
+
+/**
+ * Post a payment (receipt or vendor payment) to the ledger.
+ *
+ * Creates journal entries:
+ * - Receipt: Dr Cash/Bank, Cr AR
+ * - Payment: Dr AP, Cr Cash/Bank
+ *
+ * THIS FUNCTION WRITES TO LEDGER TABLES (journal_entries, journal_lines).
+ */
+export async function postPayment(ctx: PaymentPostingContext): Promise<PaymentPostingResult> {
+  const { tenantId, actorId, paymentId, memo } = ctx;
+
+  // 1. Check for existing posting link (idempotency)
+  const existingLink = await db
+    .select({
+      journalEntryId: paymentPostingLinks.journalEntryId,
+      transactionSetId: paymentPostingLinks.transactionSetId,
+    })
+    .from(paymentPostingLinks)
+    .where(
+      and(
+        eq(paymentPostingLinks.tenantId, tenantId),
+        eq(paymentPostingLinks.paymentId, paymentId)
+      )
+    )
+    .limit(1);
+
+  if (existingLink.length > 0) {
+    return {
+      success: true,
+      paymentId,
+      journalEntryId: existingLink[0].journalEntryId,
+      transactionSetId: existingLink[0].transactionSetId,
+      idempotent: true,
+    };
+  }
+
+  // 2. Fetch payment
+  const [payment] = await db
+    .select()
+    .from(payments)
+    .where(
+      and(
+        eq(payments.id, paymentId),
+        eq(payments.tenantId, tenantId)
+      )
+    )
+    .limit(1);
+
+  if (!payment) {
+    return {
+      success: false,
+      paymentId,
+      journalEntryId: null,
+      transactionSetId: null,
+      idempotent: false,
+      error: "Payment not found",
+    };
+  }
+
+  if (payment.status !== "draft") {
+    return {
+      success: false,
+      paymentId,
+      journalEntryId: null,
+      transactionSetId: null,
+      idempotent: false,
+      error: "Payment must be in draft status to post",
+    };
+  }
+
+  // 3. Get allocations
+  const allocations = await db
+    .select()
+    .from(paymentAllocations)
+    .where(
+      and(
+        eq(paymentAllocations.tenantId, tenantId),
+        eq(paymentAllocations.paymentId, paymentId)
+      )
+    );
+
+  if (allocations.length === 0) {
+    return {
+      success: false,
+      paymentId,
+      journalEntryId: null,
+      transactionSetId: null,
+      idempotent: false,
+      error: "Payment must have at least one allocation to post",
+    };
+  }
+
+  // 4. Calculate total allocated
+  const totalAllocated = allocations.reduce(
+    (sum, alloc) => sum + parseFloat(alloc.amount),
+    0
+  );
+
+  if (totalAllocated <= 0) {
+    return {
+      success: false,
+      paymentId,
+      journalEntryId: null,
+      transactionSetId: null,
+      idempotent: false,
+      error: "Total allocated amount must be greater than zero",
+    };
+  }
+
+  try {
+    // 5. Resolve accounts
+    const cashAccountCode = ctx.cashAccountCode || "1000";
+    const bankAccountCode = ctx.bankAccountCode || "1020";
+    const arAccountCode = ctx.arAccountCode || "1100";
+    const apAccountCode = ctx.apAccountCode || "2000";
+
+    // Determine cash/bank account based on payment method
+    const cashBankAccountCode = payment.method === "cash" ? cashAccountCode : bankAccountCode;
+
+    const [cashBankAccount] = await db
+      .select({ id: accounts.id, code: accounts.code, name: accounts.name })
+      .from(accounts)
+      .where(
+        and(
+          eq(accounts.tenantId, tenantId),
+          eq(accounts.code, cashBankAccountCode),
+          eq(accounts.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!cashBankAccount) {
+      return {
+        success: false,
+        paymentId,
+        journalEntryId: null,
+        transactionSetId: null,
+        idempotent: false,
+        error: `${payment.method === "cash" ? "Cash" : "Bank"} account not found (${cashBankAccountCode})`,
+      };
+    }
+
+    // Get AR or AP account based on payment type
+    const arApAccountCode = payment.type === "receipt" ? arAccountCode : apAccountCode;
+    const [arApAccount] = await db
+      .select({ id: accounts.id, code: accounts.code, name: accounts.name })
+      .from(accounts)
+      .where(
+        and(
+          eq(accounts.tenantId, tenantId),
+          eq(accounts.code, arApAccountCode),
+          eq(accounts.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!arApAccount) {
+      return {
+        success: false,
+        paymentId,
+        journalEntryId: null,
+        transactionSetId: null,
+        idempotent: false,
+        error: `${payment.type === "receipt" ? "AR" : "AP"} account not found (${arApAccountCode})`,
+      };
+    }
+
+    // 6. Build journal lines
+    const lines: Array<{
+      accountId: string;
+      debit: string;
+      credit: string;
+      description: string | null;
+    }> = [];
+
+    if (payment.type === "receipt") {
+      // Receipt: Dr Cash/Bank, Cr AR
+      lines.push({
+        accountId: cashBankAccount.id,
+        debit: totalAllocated.toFixed(6),
+        credit: "0",
+        description: `Receipt: ${payment.reference || paymentId}`,
+      });
+      lines.push({
+        accountId: arApAccount.id,
+        debit: "0",
+        credit: totalAllocated.toFixed(6),
+        description: `AR payment: ${payment.reference || paymentId}`,
+      });
+    } else {
+      // Payment: Dr AP, Cr Cash/Bank
+      lines.push({
+        accountId: arApAccount.id,
+        debit: totalAllocated.toFixed(6),
+        credit: "0",
+        description: `AP payment: ${payment.reference || paymentId}`,
+      });
+      lines.push({
+        accountId: cashBankAccount.id,
+        debit: "0",
+        credit: totalAllocated.toFixed(6),
+        description: `Payment: ${payment.reference || paymentId}`,
+      });
+    }
+
+    // 7. Create transaction set
+    const [txSet] = await db
+      .insert(transactionSets)
+      .values({
+        tenantId,
+        status: "posted",
+        source: "payment_posting",
+        createdByActorId: actorId,
+        businessDate: payment.paymentDate,
+        notes: memo || `Payment posting: ${payment.reference || paymentId}`,
+      })
+      .returning();
+
+    // 8. Create journal entry - THIS IS THE LEDGER WRITE
+    const [journalEntry] = await db
+      .insert(journalEntries)
+      .values({
+        tenantId,
+        postingDate: payment.paymentDate,
+        memo: memo || `${payment.type === "receipt" ? "Customer receipt" : "Vendor payment"}: ${payment.reference || paymentId}`,
+        sourceTransactionSetId: txSet.id,
+        postedByActorId: actorId,
+      })
+      .returning();
+
+    // 9. Create journal lines - THIS IS THE LEDGER WRITE
+    await db.insert(journalLines).values(
+      lines.map((line, index) => ({
+        tenantId,
+        journalEntryId: journalEntry.id,
+        lineNo: index + 1,
+        accountId: line.accountId,
+        debit: line.debit,
+        credit: line.credit,
+        description: line.description,
+      }))
+    );
+
+    // 10. Create posting link
+    await db.insert(paymentPostingLinks).values({
+      tenantId,
+      paymentId,
+      journalEntryId: journalEntry.id,
+      transactionSetId: txSet.id,
+    });
+
+    // 11. Update payment status to posted
+    await db
+      .update(payments)
+      .set({
+        status: "posted",
+        updatedAt: sql`now()`,
+      })
+      .where(eq(payments.id, paymentId));
+
+    // 12. Create audit event
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "payment",
+      entityId: paymentId,
+      action: "payment_posted",
+      metadata: {
+        journalEntryId: journalEntry.id,
+        transactionSetId: txSet.id,
+        totalAllocated,
+        allocationCount: allocations.length,
+        method: payment.method,
+        type: payment.type,
+      },
+    });
+
+    return {
+      success: true,
+      paymentId,
+      journalEntryId: journalEntry.id,
+      transactionSetId: txSet.id,
+      idempotent: false,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    return {
+      success: false,
+      paymentId,
       journalEntryId: null,
       transactionSetId: null,
       idempotent: false,
