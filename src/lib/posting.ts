@@ -2491,3 +2491,169 @@ export async function voidPayment(input: VoidPaymentInput): Promise<VoidPaymentR
     };
   });
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Payment Unallocation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export interface UnallocatePaymentInput {
+  tenantId: string;
+  actorId: string;
+  paymentId: string;
+  allocationId?: string;
+  targetType?: "sales_doc" | "purchase_doc";
+  targetId?: string;
+  reason?: string;
+}
+
+export interface UnallocatePaymentResult {
+  ok: boolean;
+  paymentId: string;
+  allocationId?: string;
+  previousAmount?: number;
+  idempotent?: boolean;
+  message?: string;
+  error?: string;
+}
+
+/**
+ * Unallocate a payment allocation.
+ *
+ * Sets the allocation amount to 0 instead of deleting (preserves history, passes guard:nodelete).
+ * Only allowed when payment.status is 'draft'.
+ */
+export async function unallocatePayment(input: UnallocatePaymentInput): Promise<UnallocatePaymentResult> {
+  const { tenantId, actorId, paymentId, allocationId, targetType, targetId, reason } = input;
+
+  return await db.transaction(async (tx) => {
+    // 1. Load payment
+    const [payment] = await tx
+      .select({ id: payments.id, status: payments.status })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.id, paymentId),
+          eq(payments.tenantId, tenantId)
+        )
+      )
+      .limit(1);
+
+    if (!payment) {
+      return {
+        ok: false,
+        paymentId,
+        error: "Payment not found",
+      };
+    }
+
+    // 2. Check payment status - must be draft
+    if (payment.status === "posted") {
+      return {
+        ok: false,
+        paymentId,
+        error: "Payment is posted. Void the payment and recreate it to change allocations.",
+      };
+    }
+
+    if (payment.status === "void") {
+      return {
+        ok: false,
+        paymentId,
+        error: "Payment is voided. Cannot unallocate.",
+      };
+    }
+
+    // 3. Find allocation
+    let allocation;
+
+    if (allocationId) {
+      // Find by allocationId
+      const [found] = await tx
+        .select()
+        .from(paymentAllocations)
+        .where(
+          and(
+            eq(paymentAllocations.id, allocationId),
+            eq(paymentAllocations.tenantId, tenantId),
+            eq(paymentAllocations.paymentId, paymentId)
+          )
+        )
+        .limit(1);
+      allocation = found;
+    } else if (targetType && targetId) {
+      // Find by targetType + targetId
+      const [found] = await tx
+        .select()
+        .from(paymentAllocations)
+        .where(
+          and(
+            eq(paymentAllocations.tenantId, tenantId),
+            eq(paymentAllocations.paymentId, paymentId),
+            eq(paymentAllocations.targetType, targetType),
+            eq(paymentAllocations.targetId, targetId)
+          )
+        )
+        .limit(1);
+      allocation = found;
+    } else {
+      return {
+        ok: false,
+        paymentId,
+        error: "Must provide either allocationId or (targetType + targetId)",
+      };
+    }
+
+    // 4. Check if allocation exists
+    if (!allocation) {
+      return {
+        ok: true,
+        paymentId,
+        idempotent: true,
+        message: "Allocation not found or already unallocated",
+      };
+    }
+
+    // 5. Check if already unallocated (amount is 0)
+    const previousAmount = parseFloat(allocation.amount);
+    if (previousAmount === 0) {
+      return {
+        ok: true,
+        paymentId,
+        allocationId: allocation.id,
+        previousAmount: 0,
+        idempotent: true,
+        message: "Already unallocated",
+      };
+    }
+
+    // 6. Update allocation amount to 0
+    await tx
+      .update(paymentAllocations)
+      .set({ amount: "0.000000" })
+      .where(eq(paymentAllocations.id, allocation.id));
+
+    // 7. Log audit event
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "payment_allocation",
+      entityId: allocation.id,
+      action: "payment_unallocated",
+      metadata: {
+        paymentId,
+        allocationId: allocation.id,
+        targetType: allocation.targetType,
+        targetId: allocation.targetId,
+        previousAmount,
+        reason: reason || "No reason provided",
+      },
+    });
+
+    return {
+      ok: true,
+      paymentId,
+      allocationId: allocation.id,
+      previousAmount,
+    };
+  });
+}

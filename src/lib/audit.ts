@@ -87,7 +87,8 @@ export type AuditAction =
   | "payment_updated"
   | "payment_allocation_created"
   | "payment_posted"
-  | "payment_voided";
+  | "payment_voided"
+  | "payment_unallocated";
 
 export interface AuditEventInput {
   tenantId: string;
