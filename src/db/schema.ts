@@ -22,6 +22,7 @@ export const partyType = pgEnum("party_type", ["customer", "vendor", "employee",
 export const productType = pgEnum("product_type", ["good", "service"]);
 export const movementType = pgEnum("movement_type", ["receipt", "issue", "transfer", "adjustment"]);
 export const movementStatus = pgEnum("movement_status", ["draft", "posted", "reversed"]);
+export const purchaseReceiptType = pgEnum("purchase_receipt_type", ["receive", "unreceive", "return_to_vendor"]);
 export const accountType = pgEnum("account_type", [
   "asset",
   "liability",
@@ -1102,5 +1103,37 @@ export const salesFulfillments = pgTable(
     ),
     idxDoc: index("sales_fulfillments_tenant_doc_idx").on(t.tenantId, t.salesDocId),
     idxLine: index("sales_fulfillments_tenant_line_idx").on(t.tenantId, t.salesDocLineId),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Layer 9B: Procurement Receiving Links
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const purchaseReceipts = pgTable(
+  "purchase_receipts",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    purchaseDocId: uuid("purchase_doc_id").notNull().references(() => purchaseDocs.id),
+    purchaseDocLineId: uuid("purchase_doc_line_id").notNull().references(() => purchaseDocLines.id),
+    movementId: uuid("movement_id").notNull().references(() => inventoryMovements.id),
+    receiptType: purchaseReceiptType("receipt_type").notNull(),
+    quantity: numeric("quantity", { precision: 18, scale: 6 }).notNull(),
+    note: text("note"),
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqReceipt: uniqueIndex("purchase_receipts_uniq").on(
+      t.tenantId,
+      t.purchaseDocLineId,
+      t.movementId,
+      t.receiptType
+    ),
+    idxTenant: index("purchase_receipts_tenant_idx").on(t.tenantId),
+    idxDoc: index("purchase_receipts_doc_idx").on(t.purchaseDocId),
+    idxLine: index("purchase_receipts_line_idx").on(t.purchaseDocLineId),
+    idxMovement: index("purchase_receipts_movement_idx").on(t.movementId),
   })
 );

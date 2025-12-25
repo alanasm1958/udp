@@ -76,7 +76,9 @@ export type AuditAction =
   | "purchase_doc_line_created"
   | "purchase_doc_line_updated"
   // Commercial - Sales Fulfillment
-  | "sales_fulfillment_created";
+  | "sales_fulfillment_created"
+  // Commercial - Procurement Receiving
+  | "purchase_receipt_created";
 
 export interface AuditEventInput {
   tenantId: string;

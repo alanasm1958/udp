@@ -71,6 +71,13 @@
       "when": 1766605993790,
       "tag": "0009_certain_squirrel_girl",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1766651626204,
+      "tag": "0010_melted_magneto",
+      "breakpoints": true
     }
   ]
 }
