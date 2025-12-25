@@ -1287,7 +1287,7 @@ export async function postSalesDoc(ctx: SalesDocPostingContext): Promise<SalesDo
 
   try {
     // 3. Resolve accounts
-    const arAccountCode = ctx.arAccountCode || "1200";
+    const arAccountCode = ctx.arAccountCode || "1100";
     const revenueAccountCode = ctx.revenueAccountCode || "4000";
     const cogsAccountCode = ctx.cogsAccountCode || "5100";
     const inventoryAccountCode = ctx.inventoryAccountCode || "1400";
