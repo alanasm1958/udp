@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { GlassCard, GlassButton, GlassInput, Spinner } from "@/components/ui/glass";
 
 export default function LoginPage() {
@@ -107,9 +108,19 @@ export default function LoginPage() {
               </GlassButton>
             </form>
 
+            {/* Link to signup */}
+            <div className="mt-6 pt-4 border-t border-white/10 text-center">
+              <p className="text-sm text-white/50">
+                Don&apos;t have an account?{" "}
+                <Link href="/signup" className="text-blue-400 hover:text-blue-300 transition-colors">
+                  Sign up
+                </Link>
+              </p>
+            </div>
+
             {/* Dev hint */}
             {process.env.NODE_ENV !== "production" && (
-              <div className="mt-6 pt-4 border-t border-white/10">
+              <div className="mt-4 pt-4 border-t border-white/10">
                 <p className="text-xs text-white/30 text-center">
                   Dev mode: Use <code className="text-white/50">admin@local</code> / <code className="text-white/50">admin1234</code>
                 </p>

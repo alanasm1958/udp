@@ -6,20 +6,14 @@
 
 import { NextResponse } from "next/server";
 import { getActivePlans } from "@/lib/subscription";
-import { getSessionFromCookie } from "@/lib/auth";
 
 /**
  * GET /api/billing/plans
  * Returns all active subscription plans
+ * Note: Public endpoint - no auth required (needed for signup page)
  */
 export async function GET(): Promise<NextResponse> {
   try {
-    // Require authenticated session
-    const session = await getSessionFromCookie();
-    if (!session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
     const plans = await getActivePlans();
 
     return NextResponse.json({

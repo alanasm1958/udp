@@ -11,10 +11,13 @@ import { checkSubscriptionAccess } from "@/lib/entitlements";
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
   "/login",
+  "/signup",
   "/onboarding",
   "/api/auth/login",
   "/api/auth/logout",
+  "/api/auth/signup",
   "/api/auth/bootstrap",
+  "/api/billing/plans", // Public for signup page plan selection
   "/_next",
   "/favicon.ico",
   "/next.svg",
