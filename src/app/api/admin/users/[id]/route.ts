@@ -10,6 +10,7 @@ import { db } from "@/db";
 import { users, roles, userRoles } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireRole, ROLES, AuthContext } from "@/lib/authz";
+import { logAuditEvent } from "@/lib/audit";
 
 interface UpdateUserRequest {
   roles?: string[];
@@ -138,6 +139,16 @@ export async function PATCH(
             eq(users.id, userId)
           )
         );
+
+      // Audit log
+      await logAuditEvent({
+        tenantId: auth.tenantId,
+        actorId: auth.actorId,
+        entityType: "user",
+        entityId: userId,
+        action: body.isActive ? "user_activated" : "user_deactivated",
+        metadata: { previousStatus: user.isActive },
+      });
     }
 
     // Update roles if provided
@@ -193,6 +204,16 @@ export async function PATCH(
           roleId,
         });
       }
+
+      // Audit log
+      await logAuditEvent({
+        tenantId: auth.tenantId,
+        actorId: auth.actorId,
+        entityType: "user",
+        entityId: userId,
+        action: "user_roles_changed",
+        metadata: { newRoles: body.roles },
+      });
     }
 
     // Get updated user with roles

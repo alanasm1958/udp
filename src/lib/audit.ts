@@ -88,7 +88,13 @@ export type AuditAction =
   | "payment_allocation_created"
   | "payment_posted"
   | "payment_voided"
-  | "payment_unallocated";
+  | "payment_unallocated"
+  // User management
+  | "user_created"
+  | "user_updated"
+  | "user_deactivated"
+  | "user_activated"
+  | "user_roles_changed";
 
 export interface AuditEventInput {
   tenantId: string;

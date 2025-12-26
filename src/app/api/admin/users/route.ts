@@ -11,6 +11,7 @@ import { users, actors, roles, userRoles } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireRole, ROLES, AuthContext } from "@/lib/authz";
 import { hashPassword } from "@/lib/password";
+import { logAuditEvent } from "@/lib/audit";
 
 interface CreateUserRequest {
   email: string;
@@ -179,6 +180,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         roleId,
       });
     }
+
+    // Audit log
+    await logAuditEvent({
+      tenantId: auth.tenantId,
+      actorId: auth.actorId,
+      entityType: "user",
+      entityId: user.id,
+      action: "user_created",
+      metadata: { email, roles: body.roles },
+    });
 
     return NextResponse.json(
       {

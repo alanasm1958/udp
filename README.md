@@ -100,6 +100,22 @@ State-changing operations require specific roles:
 - `/api/finance/payments/[id]/allocations` - admin, finance
 - `/api/finance/payments/[id]/unallocate` - admin, finance
 - `/api/admin/users` - admin only
+- `/api/admin/tenant` - admin only
+- `/settings/*` pages - admin only
+
+### Single-Tenant Security
+
+Each user belongs to exactly one tenant. The tenant context is:
+- Derived exclusively from the authenticated session (JWT)
+- **Never** accepted from request headers (x-tenant-id is overwritten by middleware)
+- Enforced at the database level with NOT NULL constraints
+
+### Admin Settings
+
+Admin users can access:
+- `/settings` - Settings landing page
+- `/settings/tenant` - Tenant info, subscription status
+- `/settings/users` - User management (create, activate/deactivate, roles)
 
 ## Billing & Subscriptions
 
@@ -151,6 +167,9 @@ npm run guard:all
 # Billing & Subscriptions
 ./scripts/smoke/layer15_billing.sh
 
+# Tenant & Admin Settings
+./scripts/smoke/layer16_tenant_rbac.sh
+
 # Reports UI
 ./scripts/smoke/layer13_reports_ui.sh
 ```
@@ -163,15 +182,21 @@ src/
     (app)/               # Authenticated app pages
       dashboard/         # Dashboard
       admin/users/       # User management (admin only)
+      settings/          # Admin settings
+        tenant/          # Tenant info & subscription
+        users/           # User management
       finance/           # Financial reports
       sales/             # Sales documents
       procurement/       # Purchase documents
       inventory/         # Inventory balances
     billing/             # Subscription management
     login/               # Login page
+    onboarding/          # Account setup (edge case)
     api/                 # API routes
       auth/              # Authentication endpoints
       admin/             # Admin-only endpoints
+        tenant/          # Tenant info API
+        users/           # User management API
       billing/           # Billing & subscription APIs
       sales/             # Sales APIs
       procurement/       # Procurement APIs
@@ -183,6 +208,7 @@ src/
   lib/
     auth.ts              # JWT session management
     authz.ts             # RBAC helpers
+    audit.ts             # Audit logging
     entitlements.ts      # Subscription & plan capabilities
     password.ts          # Password hashing (PBKDF2)
     posting.ts           # Ledger posting logic

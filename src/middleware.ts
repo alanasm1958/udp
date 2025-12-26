@@ -11,6 +11,7 @@ import { checkSubscriptionAccess } from "@/lib/entitlements";
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
   "/login",
+  "/onboarding",
   "/api/auth/login",
   "/api/auth/logout",
   "/api/auth/bootstrap",
@@ -45,7 +46,11 @@ function isApiRoute(pathname: string): boolean {
 
 // Check if path is admin route (requires admin role)
 function isAdminRoute(pathname: string): boolean {
-  return pathname.startsWith("/admin") || pathname.startsWith("/api/admin");
+  return (
+    pathname.startsWith("/admin") ||
+    pathname.startsWith("/api/admin") ||
+    pathname.startsWith("/settings")
+  );
 }
 
 export async function middleware(request: NextRequest) {
@@ -77,6 +82,17 @@ export async function middleware(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // Check if user has a valid tenantId (edge case for incomplete setup)
+  if (!session.tenantId) {
+    if (isApiRoute(pathname)) {
+      return NextResponse.json(
+        { error: "Account not configured. Please contact administrator." },
+        { status: 403 }
+      );
+    }
+    return NextResponse.redirect(new URL("/onboarding", request.url));
   }
 
   // Check admin routes require admin role
