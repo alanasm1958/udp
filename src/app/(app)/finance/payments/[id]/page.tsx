@@ -9,8 +9,12 @@ import {
   GlassBadge,
   PageHeader,
   Spinner,
+  ConfirmDialog,
+  ErrorAlert,
+  Skeleton,
+  useToast,
 } from "@/components/ui/glass";
-import { apiGet, apiPost, formatCurrency, formatDate } from "@/lib/http";
+import { formatCurrency, formatDate } from "@/lib/http";
 
 interface Payment {
   id: string;
@@ -19,6 +23,7 @@ interface Payment {
   status: "draft" | "posted" | "void";
   paymentDate: string;
   partyId: string | null;
+  partyName?: string | null;
   currency: string;
   amount: string;
   reference: string | null;
@@ -40,6 +45,7 @@ interface PaymentDetail {
 export default function PaymentDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { addToast } = useToast();
   const id = params.id as string;
 
   const [data, setData] = React.useState<PaymentDetail | null>(null);
@@ -47,13 +53,25 @@ export default function PaymentDetailPage() {
   const [actionLoading, setActionLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
+  // Confirmation dialogs
+  const [voidDialogOpen, setVoidDialogOpen] = React.useState(false);
+  const [unallocateDialogOpen, setUnallocateDialogOpen] = React.useState(false);
+  const [selectedAllocationId, setSelectedAllocationId] = React.useState<string | null>(null);
+
   const loadData = React.useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const payment = await apiGet<Payment>(`/api/finance/payments/${id}`);
-      const allocResult = await apiGet<{ allocations: Allocation[] }>(`/api/finance/payments/${id}/allocations`);
-      setData({ payment, allocations: allocResult.allocations });
+      const [paymentRes, allocRes] = await Promise.all([
+        fetch(`/api/finance/payments/${id}`),
+        fetch(`/api/finance/payments/${id}/allocations`),
+      ]);
+
+      if (!paymentRes.ok) throw new Error("Failed to load payment");
+
+      const payment = await paymentRes.json();
+      const allocResult = allocRes.ok ? await allocRes.json() : { allocations: [] };
+      setData({ payment, allocations: allocResult.allocations || [] });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load payment");
     } finally {
@@ -68,10 +86,21 @@ export default function PaymentDetailPage() {
   const handlePost = async () => {
     setActionLoading(true);
     try {
-      await apiPost(`/api/finance/payments/${id}/post`, {});
+      const res = await fetch(`/api/finance/payments/${id}/post`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to post payment");
+      }
+
+      addToast("success", "Payment posted successfully");
       loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to post payment");
+      addToast("error", err instanceof Error ? err.message : "Failed to post payment");
     } finally {
       setActionLoading(false);
     }
@@ -80,43 +109,94 @@ export default function PaymentDetailPage() {
   const handleVoid = async () => {
     setActionLoading(true);
     try {
-      await apiPost(`/api/finance/payments/${id}/void`, { reason: "Voided from UI" });
+      const res = await fetch(`/api/finance/payments/${id}/void`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Voided from UI" }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to void payment");
+      }
+
+      addToast("success", "Payment voided successfully");
+      setVoidDialogOpen(false);
       loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to void payment");
+      addToast("error", err instanceof Error ? err.message : "Failed to void payment");
     } finally {
       setActionLoading(false);
     }
   };
 
-  const handleUnallocate = async (allocationId: string) => {
+  const handleUnallocate = async () => {
+    if (!selectedAllocationId) return;
+
     setActionLoading(true);
     try {
-      await apiPost(`/api/finance/payments/${id}/unallocate`, { allocationId });
+      const res = await fetch(`/api/finance/payments/${id}/unallocate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allocationId: selectedAllocationId }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to unallocate");
+      }
+
+      addToast("success", "Allocation removed successfully");
+      setUnallocateDialogOpen(false);
+      setSelectedAllocationId(null);
       loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to unallocate");
+      addToast("error", err instanceof Error ? err.message : "Failed to unallocate");
     } finally {
       setActionLoading(false);
     }
+  };
+
+  const openUnallocateDialog = (allocationId: string) => {
+    setSelectedAllocationId(allocationId);
+    setUnallocateDialogOpen(true);
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <Spinner size="lg" />
+      <div className="space-y-6">
+        <div className="flex justify-between items-start">
+          <div>
+            <Skeleton className="h-8 w-48 mb-2" />
+            <Skeleton className="h-4 w-32" />
+          </div>
+          <div className="flex gap-2">
+            <Skeleton className="h-10 w-20" />
+            <Skeleton className="h-10 w-20" />
+          </div>
+        </div>
+        <GlassCard>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i}>
+                <Skeleton className="h-3 w-16 mb-2" />
+                <Skeleton className="h-6 w-24" />
+              </div>
+            ))}
+          </div>
+        </GlassCard>
       </div>
     );
   }
 
   if (error && !data) {
     return (
-      <GlassCard>
-        <p className="text-red-400">{error}</p>
-        <GlassButton onClick={() => router.push("/finance/payments")} className="mt-4">
+      <div className="space-y-6">
+        <ErrorAlert message={error} />
+        <GlassButton onClick={() => router.push("/finance/payments")}>
           Back to Payments
         </GlassButton>
-      </GlassCard>
+      </div>
     );
   }
 
@@ -134,6 +214,12 @@ export default function PaymentDetailPage() {
     }
   };
 
+  const allocatedAmount = data?.allocations.reduce(
+    (sum, a) => sum + parseFloat(a.amount),
+    0
+  ) || 0;
+  const unallocatedAmount = parseFloat(p.amount) - allocatedAmount;
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -143,11 +229,15 @@ export default function PaymentDetailPage() {
           <div className="flex gap-2">
             {p.status === "draft" && (
               <GlassButton variant="primary" onClick={handlePost} disabled={actionLoading}>
-                Post
+                {actionLoading ? <Spinner size="sm" /> : "Post"}
               </GlassButton>
             )}
             {p.status === "posted" && (
-              <GlassButton variant="danger" onClick={handleVoid} disabled={actionLoading}>
+              <GlassButton
+                variant="danger"
+                onClick={() => setVoidDialogOpen(true)}
+                disabled={actionLoading}
+              >
                 Void
               </GlassButton>
             )}
@@ -156,35 +246,54 @@ export default function PaymentDetailPage() {
         }
       />
 
-      {error && (
-        <GlassCard>
-          <p className="text-red-400">{error}</p>
-        </GlassCard>
-      )}
+      {error && <ErrorAlert message={error} onDismiss={() => setError(null)} />}
 
       {/* Payment Details */}
       <GlassCard>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
           <div>
-            <span className="text-xs text-white/50 uppercase">Status</span>
+            <span className="text-xs text-white/50 uppercase tracking-wide">Status</span>
             <div className="mt-1">{getStatusBadge(p.status)}</div>
           </div>
           <div>
-            <span className="text-xs text-white/50 uppercase">Date</span>
+            <span className="text-xs text-white/50 uppercase tracking-wide">Date</span>
             <p className="text-white mt-1">{formatDate(p.paymentDate)}</p>
           </div>
           <div>
-            <span className="text-xs text-white/50 uppercase">Amount</span>
-            <p className="text-xl font-semibold text-white mt-1">{formatCurrency(parseFloat(p.amount))}</p>
+            <span className="text-xs text-white/50 uppercase tracking-wide">Total Amount</span>
+            <p className={`text-xl font-semibold mt-1 ${p.type === "receipt" ? "text-emerald-400" : "text-white"}`}>
+              {p.type === "receipt" ? "+" : "-"}{formatCurrency(parseFloat(p.amount))}
+            </p>
           </div>
           <div>
-            <span className="text-xs text-white/50 uppercase">Method</span>
+            <span className="text-xs text-white/50 uppercase tracking-wide">Method</span>
             <p className="text-white mt-1 capitalize">{p.method}</p>
           </div>
         </div>
+
+        {/* Allocation Summary */}
+        <div className="mt-6 pt-6 border-t border-white/10 grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div>
+            <span className="text-xs text-white/50 uppercase tracking-wide">Allocated</span>
+            <p className="text-white mt-1 font-mono">{formatCurrency(allocatedAmount)}</p>
+          </div>
+          <div>
+            <span className="text-xs text-white/50 uppercase tracking-wide">Unallocated</span>
+            <p className={`mt-1 font-mono ${unallocatedAmount > 0 ? "text-amber-400" : "text-white/50"}`}>
+              {formatCurrency(unallocatedAmount)}
+            </p>
+          </div>
+          {p.partyName && (
+            <div>
+              <span className="text-xs text-white/50 uppercase tracking-wide">Party</span>
+              <p className="text-white mt-1">{p.partyName}</p>
+            </div>
+          )}
+        </div>
+
         {p.memo && (
-          <div className="mt-4 pt-4 border-t border-white/10">
-            <span className="text-xs text-white/50 uppercase">Memo</span>
+          <div className="mt-6 pt-6 border-t border-white/10">
+            <span className="text-xs text-white/50 uppercase tracking-wide">Memo</span>
             <p className="text-white/80 mt-1">{p.memo}</p>
           </div>
         )}
@@ -194,35 +303,64 @@ export default function PaymentDetailPage() {
       <GlassCard padding="none">
         <div className="p-4 border-b border-white/10">
           <h2 className="text-lg font-semibold text-white">Allocations</h2>
+          <p className="text-sm text-white/50">Invoices and documents this payment is applied to</p>
         </div>
         <GlassTable
-          headers={["Target Type", "Target ID", "Amount", ""]}
+          headers={["Document Type", "Document ID", "Amount", ""]}
           rightAlignColumns={[2]}
+          monospaceColumns={[1]}
           rows={
             data?.allocations.map((a) => [
               a.targetType === "sales_doc" ? "Sales Invoice" : "Purchase Invoice",
-              <span key={a.id} className="font-mono text-xs">{a.targetId.slice(0, 8)}...</span>,
+              <span key={a.id} className="text-xs">{a.targetId.slice(0, 8)}...</span>,
               formatCurrency(parseFloat(a.amount)),
               p.status === "draft" && parseFloat(a.amount) > 0 ? (
                 <GlassButton
                   key={a.id}
                   size="sm"
                   variant="ghost"
-                  onClick={() => handleUnallocate(a.id)}
+                  onClick={() => openUnallocateDialog(a.id)}
                   disabled={actionLoading}
                 >
-                  Unallocate
+                  Remove
                 </GlassButton>
               ) : (
                 <span key={a.id} className="text-white/30 text-xs">
-                  {parseFloat(a.amount) === 0 ? "Unallocated" : "-"}
+                  {parseFloat(a.amount) === 0 ? "Removed" : "-"}
                 </span>
               ),
             ]) || []
           }
-          emptyMessage="No allocations"
+          emptyMessage="No allocations yet. Allocate this payment to invoices to apply it."
         />
       </GlassCard>
+
+      {/* Void Confirmation Dialog */}
+      <ConfirmDialog
+        open={voidDialogOpen}
+        onClose={() => setVoidDialogOpen(false)}
+        onConfirm={handleVoid}
+        title="Void Payment"
+        message="Are you sure you want to void this payment? This will reverse any journal entries and cannot be undone."
+        confirmLabel="Void Payment"
+        variant="danger"
+        loading={actionLoading}
+      />
+
+      {/* Unallocate Confirmation Dialog */}
+      <ConfirmDialog
+        open={unallocateDialogOpen}
+        onClose={() => {
+          setUnallocateDialogOpen(false);
+          setSelectedAllocationId(null);
+        }}
+        onConfirm={handleUnallocate}
+        title="Remove Allocation"
+        message="Are you sure you want to remove this allocation? The payment amount will become unallocated."
+        confirmLabel="Remove"
+        variant="danger"
+        loading={actionLoading}
+      />
     </div>
   );
 }
