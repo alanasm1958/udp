@@ -6,7 +6,7 @@
 
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { tenants, users, actors, roles, userRoles } from "@/db/schema";
+import { tenants, users, actors, roles, userRoles, subscriptionPlans, tenantSubscriptions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hashPassword } from "@/lib/password";
 
@@ -25,6 +25,77 @@ export async function POST(): Promise<NextResponse> {
   }
 
   try {
+    // Seed subscription plans first (global - not tenant-scoped)
+    // This runs even if user exists to ensure plans are always available
+    const plansToSeed = [
+      {
+        code: "free",
+        name: "Free",
+        priceMonthlyCents: 0,
+        currency: "USD",
+        stripePriceId: null,
+        isActive: true,
+      },
+      {
+        code: "starter",
+        name: "Starter",
+        priceMonthlyCents: 2900, // $29/mo
+        currency: "USD",
+        stripePriceId: process.env.STRIPE_PRICE_STARTER || null,
+        isActive: true,
+      },
+      {
+        code: "pro",
+        name: "Pro",
+        priceMonthlyCents: 9900, // $99/mo
+        currency: "USD",
+        stripePriceId: process.env.STRIPE_PRICE_PRO || null,
+        isActive: true,
+      },
+    ];
+
+    for (const planData of plansToSeed) {
+      const [existingPlan] = await db
+        .select({ id: subscriptionPlans.id })
+        .from(subscriptionPlans)
+        .where(eq(subscriptionPlans.code, planData.code))
+        .limit(1);
+
+      if (!existingPlan) {
+        await db.insert(subscriptionPlans).values(planData);
+      }
+    }
+
+    // Ensure default tenant has a subscription
+    // This runs even if user exists to ensure subscription is always available
+    let [tenant] = await db
+      .select({ id: tenants.id })
+      .from(tenants)
+      .limit(1);
+
+    if (tenant) {
+      const [existingSub] = await db
+        .select({ id: tenantSubscriptions.id })
+        .from(tenantSubscriptions)
+        .where(eq(tenantSubscriptions.tenantId, tenant.id))
+        .limit(1);
+
+      if (!existingSub) {
+        const now = new Date();
+        const periodEnd = new Date(now);
+        periodEnd.setDate(periodEnd.getDate() + 30);
+
+        await db.insert(tenantSubscriptions).values({
+          tenantId: tenant.id,
+          planCode: "pro", // Give dev tenant pro access
+          status: "active",
+          currentPeriodStart: now,
+          currentPeriodEnd: periodEnd,
+          cancelAtPeriodEnd: false,
+        });
+      }
+    }
+
     // Check if admin user already exists
     const [existingUser] = await db
       .select({ id: users.id })
@@ -44,7 +115,7 @@ export async function POST(): Promise<NextResponse> {
     }
 
     // Get existing tenant or create one
-    let [tenant] = await db
+    [tenant] = await db
       .select({ id: tenants.id })
       .from(tenants)
       .limit(1);
@@ -136,6 +207,28 @@ export async function POST(): Promise<NextResponse> {
       userId: user.id,
       roleId: adminRole.id,
     });
+
+    // Create a default subscription for the tenant (pro plan for dev)
+    const [existingSub] = await db
+      .select({ id: tenantSubscriptions.id })
+      .from(tenantSubscriptions)
+      .where(eq(tenantSubscriptions.tenantId, tenant.id))
+      .limit(1);
+
+    if (!existingSub) {
+      const now = new Date();
+      const periodEnd = new Date(now);
+      periodEnd.setDate(periodEnd.getDate() + 30);
+
+      await db.insert(tenantSubscriptions).values({
+        tenantId: tenant.id,
+        planCode: "pro", // Give dev tenant pro access
+        status: "active",
+        currentPeriodStart: now,
+        currentPeriodEnd: periodEnd,
+        cancelAtPeriodEnd: false,
+      });
+    }
 
     return NextResponse.json({
       success: true,

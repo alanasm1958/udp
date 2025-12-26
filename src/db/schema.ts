@@ -23,6 +23,7 @@ export const productType = pgEnum("product_type", ["good", "service"]);
 export const movementType = pgEnum("movement_type", ["receipt", "issue", "transfer", "adjustment"]);
 export const movementStatus = pgEnum("movement_status", ["draft", "posted", "reversed"]);
 export const purchaseReceiptType = pgEnum("purchase_receipt_type", ["receive", "unreceive", "return_to_vendor"]);
+export const subscriptionStatus = pgEnum("subscription_status", ["trialing", "active", "past_due", "canceled"]);
 export const accountType = pgEnum("account_type", [
   "asset",
   "liability",
@@ -1243,5 +1244,73 @@ export const paymentPostingLinks = pgTable(
   (t) => ({
     uniqPayment: uniqueIndex("payment_posting_links_tenant_payment_uniq").on(t.tenantId, t.paymentId),
     idxJournal: index("payment_posting_links_journal_idx").on(t.journalEntryId),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Subscription & Billing (Layer 15)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Global subscription plans (not tenant-scoped)
+ * Plans are shared across all tenants: free, starter, pro
+ */
+export const subscriptionPlans = pgTable(
+  "subscription_plans",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    code: text("code").notNull().unique(), // free, starter, pro
+    name: text("name").notNull(),
+    priceMonthlyCents: integer("price_monthly_cents").notNull().default(0),
+    currency: text("currency").notNull().default("USD"),
+    stripePriceId: text("stripe_price_id"), // null for free plan
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxCode: index("subscription_plans_code_idx").on(t.code),
+  })
+);
+
+/**
+ * Tenant subscription - one per tenant
+ */
+export const tenantSubscriptions = pgTable(
+  "tenant_subscriptions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    planCode: text("plan_code").notNull(), // references subscriptionPlans.code
+    status: subscriptionStatus("status").notNull().default("trialing"),
+    currentPeriodStart: timestamp("current_period_start", { withTimezone: true }).notNull(),
+    currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }).notNull(),
+    stripeCustomerId: text("stripe_customer_id"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqTenant: uniqueIndex("tenant_subscriptions_tenant_uniq").on(t.tenantId),
+    idxStripeCustomer: index("tenant_subscriptions_stripe_customer_idx").on(t.stripeCustomerId),
+    idxStripeSub: index("tenant_subscriptions_stripe_sub_idx").on(t.stripeSubscriptionId),
+  })
+);
+
+/**
+ * Subscription events for billing audit trail
+ */
+export const subscriptionEvents = pgTable(
+  "subscription_events",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    type: text("type").notNull(), // checkout_created, subscription_updated, payment_succeeded, etc.
+    payload: jsonb("payload"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("subscription_events_tenant_idx").on(t.tenantId),
+    idxType: index("subscription_events_type_idx").on(t.type),
   })
 );

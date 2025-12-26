@@ -20,6 +20,16 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5432/udp_dev"
 
 # Authentication
 AUTH_SECRET="your-secret-key-min-32-chars"  # Required in production
+
+# Billing (optional - Stripe integration)
+STRIPE_SECRET_KEY="sk_test_..."             # Stripe secret key
+STRIPE_WEBHOOK_SECRET="whsec_..."           # Stripe webhook secret
+STRIPE_PRICE_STARTER="price_..."            # Stripe price ID for starter plan
+STRIPE_PRICE_PRO="price_..."                # Stripe price ID for pro plan
+NEXT_PUBLIC_APP_URL="http://localhost:3000" # App URL for Stripe redirects
+
+# Dev billing mode (set to skip Stripe)
+BILLING_PROVIDER="dev"                      # Use "dev" to enable dev fallback
 ```
 
 ### Development Setup
@@ -91,6 +101,42 @@ State-changing operations require specific roles:
 - `/api/finance/payments/[id]/unallocate` - admin, finance
 - `/api/admin/users` - admin only
 
+## Billing & Subscriptions
+
+Subscription plans gate access to features based on plan tier.
+
+### Plans
+
+| Plan | Price | Capabilities |
+|------|-------|--------------|
+| `free` | $0 | Dashboard, Basic Reports |
+| `starter` | $29/mo | + Sales, Procurement, Inventory |
+| `pro` | $99/mo | + Finance, Payments, AR/AP |
+
+### Billing APIs
+
+- `GET /api/billing/plans` - List available plans
+- `GET /api/billing/status` - Current subscription status
+- `POST /api/billing/checkout` - Create checkout session
+- `POST /api/billing/portal` - Open Stripe billing portal
+- `POST /api/billing/webhook` - Stripe webhook handler
+
+### Dev Billing Mode
+
+Without Stripe keys, billing operates in dev mode:
+- Checkout directly activates the selected plan
+- 30-day subscription period
+- No actual payment processing
+
+Bootstrap creates a `pro` subscription for the dev tenant.
+
+### Capability Enforcement
+
+Middleware checks subscription status and plan capabilities:
+- Pages redirect to `/billing` if no active subscription
+- APIs return `402 Payment Required` for subscription issues
+- APIs return `403 Forbidden` with `capability` field for plan limits
+
 ## Smoke Tests
 
 Run layer-specific smoke tests:
@@ -101,6 +147,9 @@ npm run guard:all
 
 # Authentication & RBAC (requires running server)
 ./scripts/smoke/layer14_auth.sh
+
+# Billing & Subscriptions
+./scripts/smoke/layer15_billing.sh
 
 # Reports UI
 ./scripts/smoke/layer13_reports_ui.sh
@@ -118,10 +167,12 @@ src/
       sales/             # Sales documents
       procurement/       # Purchase documents
       inventory/         # Inventory balances
+    billing/             # Subscription management
     login/               # Login page
     api/                 # API routes
       auth/              # Authentication endpoints
       admin/             # Admin-only endpoints
+      billing/           # Billing & subscription APIs
       sales/             # Sales APIs
       procurement/       # Procurement APIs
       finance/           # Finance APIs
@@ -132,6 +183,7 @@ src/
   lib/
     auth.ts              # JWT session management
     authz.ts             # RBAC helpers
+    entitlements.ts      # Subscription & plan capabilities
     password.ts          # Password hashing (PBKDF2)
     posting.ts           # Ledger posting logic
   db/

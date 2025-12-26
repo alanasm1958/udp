@@ -13,7 +13,9 @@ import * as path from "path";
 const SCHEMA_PATH = path.resolve(__dirname, "../../src/db/schema.ts");
 
 // Tables that are explicitly allowed to NOT have tenant_id
-const ALLOWED_EXCEPTIONS = ["tenants"];
+// - tenants: the tenant table itself has id, not tenant_id
+// - subscription_plans: global SaaS plans shared across all tenants
+const ALLOWED_EXCEPTIONS = ["tenants", "subscription_plans"];
 
 function main() {
   console.log("🔍 Checking tenant scope in schema...\n");

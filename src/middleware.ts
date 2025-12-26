@@ -1,11 +1,12 @@
 /**
  * Next.js Middleware
- * Handles authentication and injects tenant context into request headers
+ * Handles authentication and subscription enforcement
  */
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSessionTokenFromRequest, verifySessionToken } from "@/lib/auth";
+import { checkSubscriptionAccess } from "@/lib/entitlements";
 
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
@@ -19,9 +20,22 @@ const PUBLIC_PATHS = [
   "/vercel.svg",
 ];
 
+// Paths that don't require subscription check (but still need auth)
+const SUBSCRIPTION_EXEMPT_PATHS = [
+  "/billing",
+  "/api/billing/",
+  "/api/auth/",
+  "/api/admin/", // Admin routes use role-based auth, not subscription
+];
+
 // Check if path is public
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((path) => pathname.startsWith(path));
+}
+
+// Check if path is exempt from subscription check
+function isSubscriptionExempt(pathname: string): boolean {
+  return SUBSCRIPTION_EXEMPT_PATHS.some((path) => pathname.startsWith(path));
 }
 
 // Check if path is an API route
@@ -31,11 +45,12 @@ function isApiRoute(pathname: string): boolean {
 
 // Check if path is admin route (requires admin role)
 function isAdminRoute(pathname: string): boolean {
-  return pathname.startsWith("/admin");
+  return pathname.startsWith("/admin") || pathname.startsWith("/api/admin");
 }
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const method = request.method;
 
   // Allow public paths
   if (isPublicPath(pathname)) {
@@ -89,6 +104,49 @@ export async function middleware(request: NextRequest) {
   requestHeaders.set("x-user-roles", session.roles.join(","));
   requestHeaders.set("x-user-email", session.email);
 
+  // Check subscription for non-exempt paths
+  if (!isSubscriptionExempt(pathname)) {
+    // For state-changing API methods, check capabilities
+    // For page routes and GET APIs, just check active subscription
+    const subCheck = await checkSubscriptionAccess(
+      session.tenantId,
+      pathname,
+      method
+    );
+
+    if (!subCheck.ok) {
+      // No active subscription
+      if (isApiRoute(pathname)) {
+        // For capability issues, return 403
+        if (subCheck.missingCapability) {
+          return NextResponse.json(
+            {
+              error: subCheck.error,
+              capability: subCheck.missingCapability,
+              planCode: subCheck.planCode,
+            },
+            { status: 403 }
+          );
+        }
+        // For subscription issues, return 402 Payment Required
+        return NextResponse.json(
+          {
+            error: subCheck.error,
+            hasSubscription: subCheck.hasSubscription,
+            isActive: subCheck.isActive,
+          },
+          { status: 402 }
+        );
+      }
+      // Redirect pages to billing
+      return NextResponse.redirect(new URL("/billing", request.url));
+    }
+
+    // Inject subscription info into headers for downstream use
+    requestHeaders.set("x-subscription-plan", subCheck.planCode || "");
+    requestHeaders.set("x-subscription-active", subCheck.isActive.toString());
+  }
+
   // Continue with the modified headers
   return NextResponse.next({
     request: {
@@ -96,6 +154,9 @@ export async function middleware(request: NextRequest) {
     },
   });
 }
+
+// Use Node.js runtime for crypto support
+export const runtime = "nodejs";
 
 export const config = {
   matcher: [
