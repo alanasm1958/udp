@@ -21,6 +21,7 @@ import {
   getPaymentAllocatedTotal,
   getDocAllocatedTotalIncludingDraft,
 } from "@/lib/arAp";
+import { requireRole, ROLES } from "@/lib/authz";
 
 type AllocationTargetType = "sales_doc" | "purchase_doc";
 
@@ -107,6 +108,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    // RBAC: admin or finance can add payment allocations
+    const roleCheck = requireRole(req, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

@@ -13,6 +13,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { unallocatePayment } from "@/lib/posting";
+import { requireRole, ROLES } from "@/lib/authz";
 
 interface UnallocateRequest {
   allocationId?: string;
@@ -33,6 +34,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    // RBAC: admin or finance can unallocate payments
+    const roleCheck = requireRole(req, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

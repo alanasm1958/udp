@@ -23,6 +23,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { requireRole, ROLES } from "@/lib/authz";
 
 type ReceiptType = "receive" | "unreceive" | "return_to_vendor";
 
@@ -61,6 +62,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    // RBAC: admin or procurement can receive goods
+    const roleCheck = requireRole(req, [ROLES.PROCUREMENT]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

@@ -52,6 +52,7 @@ export const users = pgTable(
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
     email: text("email").notNull(),
     fullName: text("full_name").notNull(),
+    passwordHash: text("password_hash"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

@@ -104,6 +104,21 @@ export function apiDelete<T = unknown>(url: string, options?: FetchOptions): Pro
 }
 
 /**
+ * Shorthand for PATCH requests.
+ */
+export function apiPatch<T = unknown>(
+  url: string,
+  body?: unknown,
+  options?: FetchOptions
+): Promise<T> {
+  return api<T>(url, {
+    ...options,
+    method: "PATCH",
+    body: body ? JSON.stringify(body) : undefined,
+  });
+}
+
+/**
  * Format currency values for display.
  */
 export function formatCurrency(amount: number | string, currency = "USD"): string {

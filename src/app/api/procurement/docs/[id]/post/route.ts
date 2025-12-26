@@ -13,6 +13,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { postPurchaseDoc } from "@/lib/posting";
+import { requireRole, ROLES } from "@/lib/authz";
 
 interface PostRequest {
   memo?: string;
@@ -31,6 +32,10 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    // RBAC: admin, finance, or procurement can post purchase documents
+    const roleCheck = requireRole(req, [ROLES.FINANCE, ROLES.PROCUREMENT]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

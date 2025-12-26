@@ -1,36 +1,143 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# UDP - Unified Data Platform
 
-## Getting Started
+A modern ERP/accounting platform built with Next.js 15, featuring a liquid glass UI and comprehensive business functionality.
 
-First, run the development server:
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18+
+- PostgreSQL 14+
+- Docker (optional, for containerized Postgres)
+
+### Environment Variables
+
+Create a `.env.local` file:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Database
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/udp_dev"
+
+# Authentication
+AUTH_SECRET="your-secret-key-min-32-chars"  # Required in production
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Development Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Install dependencies
+npm install
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+# Start Postgres (if using Docker)
+docker compose up -d
 
-## Learn More
+# Run migrations
+npm run db:migrate:dev
 
-To learn more about Next.js, take a look at the following resources:
+# Start development server
+npm run dev
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Open [http://localhost:3000](http://localhost:3000) to access the application.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Authentication
 
-## Deploy on Vercel
+### Bootstrap (Development Only)
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+In development mode, bootstrap creates an admin user:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+curl -X POST http://localhost:3000/api/auth/bootstrap
+```
+
+This creates:
+- **Email:** `admin@local`
+- **Password:** `admin1234`
+- **Role:** `admin` (full access to all features)
+
+### Login
+
+Navigate to `/login` or call:
+
+```bash
+curl -X POST http://localhost:3000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@local","password":"admin1234"}'
+```
+
+Session is stored in an HttpOnly cookie (`udp_session`).
+
+### Roles
+
+| Role | Access |
+|------|--------|
+| `admin` | Full access to all features |
+| `finance` | Financial posting, payments, AR/AP |
+| `sales` | Sales documents, fulfillment |
+| `procurement` | Purchase documents, receiving |
+| `inventory` | Inventory management |
+
+### RBAC-Protected Endpoints
+
+State-changing operations require specific roles:
+
+- `/api/sales/docs/[id]/post` - admin, finance, sales
+- `/api/sales/docs/[id]/fulfill` - admin, sales
+- `/api/procurement/docs/[id]/post` - admin, finance, procurement
+- `/api/procurement/docs/[id]/receive` - admin, procurement
+- `/api/finance/payments/[id]/post` - admin, finance
+- `/api/finance/payments/[id]/void` - admin, finance
+- `/api/finance/payments/[id]/allocations` - admin, finance
+- `/api/finance/payments/[id]/unallocate` - admin, finance
+- `/api/admin/users` - admin only
+
+## Smoke Tests
+
+Run layer-specific smoke tests:
+
+```bash
+# All layers
+npm run guard:all
+
+# Authentication & RBAC (requires running server)
+./scripts/smoke/layer14_auth.sh
+
+# Reports UI
+./scripts/smoke/layer13_reports_ui.sh
+```
+
+## Project Structure
+
+```
+src/
+  app/                    # Next.js App Router
+    (app)/               # Authenticated app pages
+      dashboard/         # Dashboard
+      admin/users/       # User management (admin only)
+      finance/           # Financial reports
+      sales/             # Sales documents
+      procurement/       # Purchase documents
+      inventory/         # Inventory balances
+    login/               # Login page
+    api/                 # API routes
+      auth/              # Authentication endpoints
+      admin/             # Admin-only endpoints
+      sales/             # Sales APIs
+      procurement/       # Procurement APIs
+      finance/           # Finance APIs
+      reports/           # Reporting APIs
+  components/
+    ui/glass.tsx         # Liquid glass UI components
+    layout/shell.tsx     # App shell with navigation
+  lib/
+    auth.ts              # JWT session management
+    authz.ts             # RBAC helpers
+    password.ts          # Password hashing (PBKDF2)
+    posting.ts           # Ledger posting logic
+  db/
+    schema.ts            # Drizzle ORM schema
+```
+
+## License
+
+Proprietary - All rights reserved.
