@@ -5,9 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/db";
-import { tenantSubscriptions, subscriptionEvents, subscriptionPlans } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
+import { applyStripeEventToTenantSubscription } from "@/lib/subscription";
 
 // Check if we're in dev billing mode
 function isDevBillingMode(): boolean {
@@ -78,66 +76,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const subscription = event.data.object as any;
         const customerId = subscription.customer as string;
-        const stripeSubId = subscription.id;
-        const status = subscription.status;
-
-        // Find tenant by customer ID
-        const [tenantSub] = await db
-          .select()
-          .from(tenantSubscriptions)
-          .where(eq(tenantSubscriptions.stripeCustomerId, customerId))
-          .limit(1);
-
-        if (!tenantSub) {
-          console.error(`No tenant found for Stripe customer: ${customerId}`);
-          return NextResponse.json({ received: true });
-        }
-
-        // Get plan code from price
         const priceId = subscription.items.data[0]?.price?.id;
-        let planCode = tenantSub.planCode;
 
-        if (priceId) {
-          const [plan] = await db
-            .select()
-            .from(subscriptionPlans)
-            .where(eq(subscriptionPlans.stripePriceId, priceId))
-            .limit(1);
-
-          if (plan) {
-            planCode = plan.code;
-          }
-        }
-
-        // Map Stripe status to our status
-        let ourStatus: "trialing" | "active" | "past_due" | "canceled" = "active";
-        if (status === "trialing") ourStatus = "trialing";
-        else if (status === "past_due") ourStatus = "past_due";
-        else if (status === "canceled" || status === "unpaid") ourStatus = "canceled";
-
-        // Update subscription
-        await db
-          .update(tenantSubscriptions)
-          .set({
-            planCode,
-            status: ourStatus,
-            stripeSubscriptionId: stripeSubId,
-            currentPeriodStart: new Date(subscription.current_period_start * 1000),
-            currentPeriodEnd: new Date(subscription.current_period_end * 1000),
-            cancelAtPeriodEnd: subscription.cancel_at_period_end,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(tenantSubscriptions.id, tenantSub.id));
-
-        // Log event
-        await db.insert(subscriptionEvents).values({
-          tenantId: tenantSub.tenantId,
+        await applyStripeEventToTenantSubscription({
           type: event.type,
-          payload: {
-            stripeSubscriptionId: stripeSubId,
-            status,
-            planCode,
-          },
+          customerId,
+          subscriptionId: subscription.id,
+          status: subscription.status,
+          priceId,
+          periodStart: new Date(subscription.current_period_start * 1000),
+          periodEnd: new Date(subscription.current_period_end * 1000),
+          cancelAtPeriodEnd: subscription.cancel_at_period_end,
         });
 
         break;
@@ -148,30 +97,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const subscription = event.data.object as any;
         const customerId = subscription.customer as string;
 
-        const [tenantSub] = await db
-          .select()
-          .from(tenantSubscriptions)
-          .where(eq(tenantSubscriptions.stripeCustomerId, customerId))
-          .limit(1);
+        await applyStripeEventToTenantSubscription({
+          type: event.type,
+          customerId,
+          subscriptionId: subscription.id,
+          status: "canceled",
+        });
 
-        if (tenantSub) {
-          await db
-            .update(tenantSubscriptions)
-            .set({
-              status: "canceled",
-              cancelAtPeriodEnd: false,
-              updatedAt: sql`now()`,
-            })
-            .where(eq(tenantSubscriptions.id, tenantSub.id));
-
-          await db.insert(subscriptionEvents).values({
-            tenantId: tenantSub.tenantId,
-            type: event.type,
-            payload: {
-              stripeSubscriptionId: subscription.id,
-            },
-          });
-        }
         break;
       }
 
@@ -180,33 +112,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const invoice = event.data.object as any;
         const customerId = invoice.customer as string;
 
-        const [tenantSub] = await db
-          .select()
-          .from(tenantSubscriptions)
-          .where(eq(tenantSubscriptions.stripeCustomerId, customerId))
-          .limit(1);
+        await applyStripeEventToTenantSubscription({
+          type: event.type,
+          customerId,
+          status: "active",
+        });
 
-        if (tenantSub) {
-          // Update to active if was past_due
-          if (tenantSub.status === "past_due") {
-            await db
-              .update(tenantSubscriptions)
-              .set({
-                status: "active",
-                updatedAt: sql`now()`,
-              })
-              .where(eq(tenantSubscriptions.id, tenantSub.id));
-          }
-
-          await db.insert(subscriptionEvents).values({
-            tenantId: tenantSub.tenantId,
-            type: event.type,
-            payload: {
-              invoiceId: invoice.id,
-              amountPaid: invoice.amount_paid,
-            },
-          });
-        }
         break;
       }
 
@@ -215,30 +126,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const invoice = event.data.object as any;
         const customerId = invoice.customer as string;
 
-        const [tenantSub] = await db
-          .select()
-          .from(tenantSubscriptions)
-          .where(eq(tenantSubscriptions.stripeCustomerId, customerId))
-          .limit(1);
+        await applyStripeEventToTenantSubscription({
+          type: event.type,
+          customerId,
+          status: "past_due",
+        });
 
-        if (tenantSub) {
-          await db
-            .update(tenantSubscriptions)
-            .set({
-              status: "past_due",
-              updatedAt: sql`now()`,
-            })
-            .where(eq(tenantSubscriptions.id, tenantSub.id));
-
-          await db.insert(subscriptionEvents).values({
-            tenantId: tenantSub.tenantId,
-            type: event.type,
-            payload: {
-              invoiceId: invoice.id,
-              attemptCount: invoice.attempt_count,
-            },
-          });
-        }
         break;
       }
 

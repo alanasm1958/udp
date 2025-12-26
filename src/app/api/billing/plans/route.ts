@@ -5,9 +5,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { db } from "@/db";
-import { subscriptionPlans } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { getActivePlans } from "@/lib/subscription";
+import { getSessionFromCookie } from "@/lib/auth";
 
 /**
  * GET /api/billing/plans
@@ -15,21 +14,31 @@ import { eq } from "drizzle-orm";
  */
 export async function GET(): Promise<NextResponse> {
   try {
-    const plans = await db
-      .select({
-        id: subscriptionPlans.id,
-        code: subscriptionPlans.code,
-        name: subscriptionPlans.name,
-        priceMonthlyCents: subscriptionPlans.priceMonthlyCents,
-        currency: subscriptionPlans.currency,
-        stripePriceId: subscriptionPlans.stripePriceId,
-        isActive: subscriptionPlans.isActive,
-      })
-      .from(subscriptionPlans)
-      .where(eq(subscriptionPlans.isActive, true))
-      .orderBy(subscriptionPlans.priceMonthlyCents);
+    // Require authenticated session
+    const session = await getSessionFromCookie();
+    if (!session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    return NextResponse.json({ plans });
+    const plans = await getActivePlans();
+
+    return NextResponse.json({
+      plans: plans.map((plan) => ({
+        id: plan.id,
+        code: plan.code,
+        name: plan.name,
+        description: plan.description,
+        currency: plan.currency,
+        priceAmount: plan.priceAmount,
+        billingType: plan.billingType,
+        interval: plan.interval,
+        intervalCount: plan.intervalCount,
+        trialDays: plan.trialDays,
+        durationMonths: plan.durationMonths,
+        isPromotional: plan.isPromotional,
+        stripePriceId: plan.stripePriceId,
+      })),
+    });
   } catch (error) {
     console.error("GET /api/billing/plans error:", error);
     return NextResponse.json(

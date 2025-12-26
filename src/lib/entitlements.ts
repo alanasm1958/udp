@@ -7,7 +7,7 @@
 
 import { db } from "@/db";
 import { tenantSubscriptions } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export type PlanCode = "free" | "starter" | "pro";
 export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance";
@@ -28,9 +28,12 @@ export interface TenantSubscription {
   id: string;
   tenantId: string;
   planCode: string;
-  status: "trialing" | "active" | "past_due" | "canceled";
+  status: "none" | "trialing" | "active" | "past_due" | "canceled" | "expired";
+  isCurrent: boolean;
+  startedAt: Date;
   currentPeriodStart: Date;
   currentPeriodEnd: Date;
+  endedAt: Date | null;
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
   cancelAtPeriodEnd: boolean;
@@ -39,7 +42,7 @@ export interface TenantSubscription {
 }
 
 /**
- * Get the subscription for a tenant
+ * Get the current subscription for a tenant
  */
 export async function getTenantSubscription(
   tenantId: string
@@ -47,7 +50,12 @@ export async function getTenantSubscription(
   const [sub] = await db
     .select()
     .from(tenantSubscriptions)
-    .where(eq(tenantSubscriptions.tenantId, tenantId))
+    .where(
+      and(
+        eq(tenantSubscriptions.tenantId, tenantId),
+        eq(tenantSubscriptions.isCurrent, true)
+      )
+    )
     .limit(1);
 
   return sub || null;

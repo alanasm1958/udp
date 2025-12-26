@@ -8,7 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { subscriptionPlans, tenantSubscriptions, subscriptionEvents, tenants } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
-import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
+import { getSessionFromCookie } from "@/lib/auth";
 
 interface CheckoutRequest {
   planCode: string;
@@ -25,7 +25,13 @@ function isDevBillingMode(): boolean {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
-    const tenantId = requireTenantIdFromHeaders(req);
+    // Require authenticated session
+    const session = await getSessionFromCookie();
+    if (!session || !session.tenantId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    const tenantId = session.tenantId;
+
     const body: CheckoutRequest = await req.json();
 
     if (!body.planCode) {
@@ -50,41 +56,47 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     // Dev fallback mode
     if (isDevBillingMode()) {
-      // Get or create subscription
       const now = new Date();
       const periodEnd = new Date(now);
-      periodEnd.setDate(periodEnd.getDate() + 30); // 30-day period
 
-      const [existingSub] = await db
-        .select()
-        .from(tenantSubscriptions)
-        .where(eq(tenantSubscriptions.tenantId, tenantId))
-        .limit(1);
-
-      if (existingSub) {
-        // Update existing subscription
-        await db
-          .update(tenantSubscriptions)
-          .set({
-            planCode: body.planCode,
-            status: "active",
-            currentPeriodStart: now,
-            currentPeriodEnd: periodEnd,
-            cancelAtPeriodEnd: false,
-            updatedAt: sql`now()`,
-          })
-          .where(eq(tenantSubscriptions.id, existingSub.id));
+      // Calculate period end based on plan type
+      if (plan.billingType === "trial" && plan.trialDays) {
+        periodEnd.setDate(periodEnd.getDate() + plan.trialDays);
+      } else if (plan.durationMonths) {
+        periodEnd.setMonth(periodEnd.getMonth() + plan.durationMonths);
       } else {
-        // Create new subscription
-        await db.insert(tenantSubscriptions).values({
-          tenantId,
-          planCode: body.planCode,
-          status: "active",
-          currentPeriodStart: now,
-          currentPeriodEnd: periodEnd,
-          cancelAtPeriodEnd: false,
-        });
+        periodEnd.setMonth(periodEnd.getMonth() + (plan.intervalCount || 1));
       }
+
+      const status = plan.billingType === "trial" ? "trialing" : "active";
+
+      // Mark any existing current subscription as not current
+      await db
+        .update(tenantSubscriptions)
+        .set({
+          isCurrent: false,
+          endedAt: now,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(tenantSubscriptions.tenantId, tenantId),
+            eq(tenantSubscriptions.isCurrent, true)
+          )
+        );
+
+      // Create new subscription
+      await db.insert(tenantSubscriptions).values({
+        tenantId,
+        planCode: body.planCode,
+        status,
+        isCurrent: true,
+        startedAt: now,
+        currentPeriodStart: now,
+        currentPeriodEnd: periodEnd,
+        cancelAtPeriodEnd: false,
+        metadata: { source: "dev_checkout" },
+      });
 
       // Log subscription event
       await db.insert(subscriptionEvents).values({
@@ -101,8 +113,33 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Stripe mode
-    if (!plan.stripePriceId) {
+    // Stripe mode - check if Stripe is configured
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return NextResponse.json(
+        { error: "Stripe is not configured. Use dev mode or configure STRIPE_SECRET_KEY." },
+        { status: 501 }
+      );
+    }
+
+    // For trial plans (OFFER_6M_FREE), we'll set up a trial on the monthly plan
+    let stripePriceId = plan.stripePriceId;
+    let trialDays: number | undefined;
+
+    if (plan.billingType === "trial") {
+      // For trial offers, use the MONTHLY_30 price with trial period
+      const [monthlyPlan] = await db
+        .select()
+        .from(subscriptionPlans)
+        .where(eq(subscriptionPlans.code, "MONTHLY_30"))
+        .limit(1);
+
+      if (monthlyPlan?.stripePriceId) {
+        stripePriceId = monthlyPlan.stripePriceId;
+        trialDays = plan.trialDays ?? undefined;
+      }
+    }
+
+    if (!stripePriceId) {
       return NextResponse.json(
         { error: "Plan does not have a Stripe price configured" },
         { status: 400 }
@@ -137,7 +174,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const [existingSub] = await db
       .select()
       .from(tenantSubscriptions)
-      .where(eq(tenantSubscriptions.tenantId, tenantId))
+      .where(
+        and(
+          eq(tenantSubscriptions.tenantId, tenantId),
+          eq(tenantSubscriptions.isCurrent, true)
+        )
+      )
       .limit(1);
 
     let stripeCustomerId = existingSub?.stripeCustomerId;
@@ -163,8 +205,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const now = new Date();
         await db.insert(tenantSubscriptions).values({
           tenantId,
-          planCode: "free", // Will be updated by webhook
+          planCode: "MONTHLY_30", // Will be updated by webhook
           status: "trialing",
+          isCurrent: true,
+          startedAt: now,
           currentPeriodStart: now,
           currentPeriodEnd: now,
           stripeCustomerId,
@@ -176,43 +220,52 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Create Checkout Session
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-    const session = await stripe.checkout.sessions.create({
+    // Build checkout session params
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sessionParams: any = {
       customer: stripeCustomerId,
       mode: "subscription",
       payment_method_types: ["card"],
       line_items: [
         {
-          price: plan.stripePriceId,
+          price: stripePriceId,
           quantity: 1,
         },
       ],
-      success_url: `${appUrl}/billing?success=true`,
-      cancel_url: `${appUrl}/billing?canceled=true`,
+      success_url: `${appUrl}/settings/billing?success=true`,
+      cancel_url: `${appUrl}/settings/billing?canceled=true`,
       metadata: {
         tenantId,
         planCode: body.planCode,
       },
-    });
+    };
+
+    // Add trial period if applicable
+    if (trialDays) {
+      sessionParams.subscription_data = {
+        trial_period_days: trialDays,
+      };
+    }
+
+    const checkoutSession = await stripe.checkout.sessions.create(sessionParams);
 
     // Log checkout event
     await db.insert(subscriptionEvents).values({
       tenantId,
       type: "checkout_session_created",
       payload: {
-        sessionId: session.id,
+        sessionId: checkoutSession.id,
         planCode: body.planCode,
-        stripePriceId: plan.stripePriceId,
+        stripePriceId,
+        trialDays,
       },
     });
 
     return NextResponse.json({
-      url: session.url,
-      sessionId: session.id,
+      url: checkoutSession.url,
+      sessionId: checkoutSession.id,
     });
   } catch (error) {
-    if (error instanceof TenantError) {
-      return NextResponse.json({ error: error.message }, { status: error.statusCode });
-    }
     console.error("POST /api/billing/checkout error:", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Internal server error" },

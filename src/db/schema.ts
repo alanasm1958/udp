@@ -23,7 +23,8 @@ export const productType = pgEnum("product_type", ["good", "service"]);
 export const movementType = pgEnum("movement_type", ["receipt", "issue", "transfer", "adjustment"]);
 export const movementStatus = pgEnum("movement_status", ["draft", "posted", "reversed"]);
 export const purchaseReceiptType = pgEnum("purchase_receipt_type", ["receive", "unreceive", "return_to_vendor"]);
-export const subscriptionStatus = pgEnum("subscription_status", ["trialing", "active", "past_due", "canceled"]);
+export const subscriptionStatus = pgEnum("subscription_status", ["none", "trialing", "active", "past_due", "canceled", "expired"]);
+export const billingType = pgEnum("billing_type", ["recurring", "trial"]);
 export const accountType = pgEnum("account_type", [
   "asset",
   "liability",
@@ -1253,19 +1254,28 @@ export const paymentPostingLinks = pgTable(
 
 /**
  * Global subscription plans (not tenant-scoped)
- * Plans are shared across all tenants: free, starter, pro
+ * Plans are shared across all tenants
  */
 export const subscriptionPlans = pgTable(
   "subscription_plans",
   {
     id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-    code: text("code").notNull().unique(), // free, starter, pro
+    code: text("code").notNull().unique(), // MONTHLY_30, SEMIANNUAL_25, OFFER_6M_FREE
     name: text("name").notNull(),
-    priceMonthlyCents: integer("price_monthly_cents").notNull().default(0),
+    description: text("description"),
     currency: text("currency").notNull().default("USD"),
-    stripePriceId: text("stripe_price_id"), // null for free plan
+    priceAmount: numeric("price_amount", { precision: 10, scale: 2 }).notNull().default("0"),
+    billingType: billingType("billing_type").notNull().default("recurring"),
+    interval: text("interval").notNull().default("month"), // month, year
+    intervalCount: integer("interval_count").notNull().default(1), // 1 = monthly, 6 = semi-annual
+    trialDays: integer("trial_days"), // null for non-trial, 180 for OFFER_6M_FREE
+    durationMonths: integer("duration_months"), // null for ongoing, 6 for semi-annual/trial
+    isPromotional: boolean("is_promotional").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
+    stripePriceId: text("stripe_price_id"),
+    stripeProductId: text("stripe_product_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     idxCode: index("subscription_plans_code_idx").on(t.code),
@@ -1273,7 +1283,8 @@ export const subscriptionPlans = pgTable(
 );
 
 /**
- * Tenant subscription - one per tenant
+ * Tenant subscription - supports history with isCurrent flag
+ * Only one row per tenant can have isCurrent=true at a time (enforced in app logic)
  */
 export const tenantSubscriptions = pgTable(
   "tenant_subscriptions",
@@ -1282,16 +1293,23 @@ export const tenantSubscriptions = pgTable(
     tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
     planCode: text("plan_code").notNull(), // references subscriptionPlans.code
     status: subscriptionStatus("status").notNull().default("trialing"),
+    isCurrent: boolean("is_current").notNull().default(true),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     currentPeriodStart: timestamp("current_period_start", { withTimezone: true }).notNull(),
     currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }).notNull(),
+    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
     stripeCustomerId: text("stripe_customer_id"),
     stripeSubscriptionId: text("stripe_subscription_id"),
-    cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdByActorId: uuid("created_by_actor_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    uniqTenant: uniqueIndex("tenant_subscriptions_tenant_uniq").on(t.tenantId),
+    idxTenantStatus: index("tenant_subscriptions_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantPeriodEnd: index("tenant_subscriptions_tenant_period_end_idx").on(t.tenantId, t.currentPeriodEnd),
+    idxTenantCurrent: index("tenant_subscriptions_tenant_current_idx").on(t.tenantId, t.isCurrent),
     idxStripeCustomer: index("tenant_subscriptions_stripe_customer_idx").on(t.stripeCustomerId),
     idxStripeSub: index("tenant_subscriptions_stripe_sub_idx").on(t.stripeSubscriptionId),
   })

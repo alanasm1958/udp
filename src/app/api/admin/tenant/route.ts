@@ -6,9 +6,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { tenants, tenantSubscriptions, subscriptionPlans, users } from "@/db/schema";
+import { tenants, users } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireRole, ROLES, AuthContext } from "@/lib/authz";
+import { getCurrentSubscription } from "@/lib/subscription";
 
 /**
  * GET /api/admin/tenant
@@ -37,40 +38,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "Tenant not found" }, { status: 404 });
     }
 
-    // Get subscription status
-    const [subscription] = await db
-      .select({
-        id: tenantSubscriptions.id,
-        planCode: tenantSubscriptions.planCode,
-        status: tenantSubscriptions.status,
-        currentPeriodStart: tenantSubscriptions.currentPeriodStart,
-        currentPeriodEnd: tenantSubscriptions.currentPeriodEnd,
-        cancelAtPeriodEnd: tenantSubscriptions.cancelAtPeriodEnd,
-      })
-      .from(tenantSubscriptions)
-      .where(eq(tenantSubscriptions.tenantId, auth.tenantId))
-      .limit(1);
-
-    // Get plan details if subscription exists
-    let plan = null;
-    if (subscription) {
-      const [planRow] = await db
-        .select({
-          code: subscriptionPlans.code,
-          name: subscriptionPlans.name,
-          priceMonthlyCents: subscriptionPlans.priceMonthlyCents,
-          currency: subscriptionPlans.currency,
-        })
-        .from(subscriptionPlans)
-        .where(
-          and(
-            eq(subscriptionPlans.code, subscription.planCode),
-            eq(subscriptionPlans.isActive, true)
-          )
-        )
-        .limit(1);
-      plan = planRow || null;
-    }
+    // Get current subscription using helper
+    const subscription = await getCurrentSubscription(auth.tenantId);
 
     // Get user count
     const userRows = await db
@@ -96,11 +65,20 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       },
       subscription: subscription
         ? {
-            ...subscription,
-            plan,
+            id: subscription.id,
+            planCode: subscription.planCode,
+            planName: subscription.planName,
+            status: subscription.status,
+            currentPeriodStart: subscription.currentPeriodStart,
+            currentPeriodEnd: subscription.currentPeriodEnd,
+            cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+            isPromotional: subscription.isPromotional ?? false,
             isActive: subscription.status === "active" || subscription.status === "trialing",
           }
-        : null,
+        : {
+            status: "none" as const,
+            isActive: false,
+          },
     });
   } catch (error) {
     console.error("GET /api/admin/tenant error:", error);
