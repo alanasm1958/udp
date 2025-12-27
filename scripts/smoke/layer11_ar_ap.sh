@@ -4,17 +4,32 @@
 #
 # Prerequisites:
 # - Server running on localhost:3000
-# - Database with tenant 21106d5d-71bb-4a2a-a0d8-1ea698d37989
+# - Database bootstrapped with admin user
 # - Previous layers (1-10) smoke tests should have run to create test data
 #
 
 set -e
 
-BASE_URL="http://localhost:3000"
-TENANT_ID="21106d5d-71bb-4a2a-a0d8-1ea698d37989"
-USER_ID="2aaf5a1d-cd8d-4b36-8fcb-0f59c70ef7b4"
+BASE_URL="${BASE_URL:-http://localhost:3000}"
+COOKIE_JAR="${COOKIE_JAR:-/tmp/udp_smoke_cookies.txt}"
 
-# Helper function for API calls
+echo "=== Layer 11 Smoke Test: AR/AP ==="
+echo ""
+
+echo "=== Auth: Login as admin ==="
+rm -f "$COOKIE_JAR"
+curl -s -X POST "$BASE_URL/api/auth/bootstrap" > /dev/null 2>&1 || true
+LOGIN=$(curl -s -X POST "$BASE_URL/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -c "$COOKIE_JAR" \
+  -d '{"email":"admin@local","password":"admin1234"}')
+if ! echo "$LOGIN" | jq -e '.success' > /dev/null 2>&1; then
+  echo "FAIL: Login failed: $LOGIN"
+  exit 1
+fi
+echo "PASS: Logged in as admin"
+echo ""
+
 api() {
   local method=$1
   local path=$2
@@ -23,29 +38,26 @@ api() {
   if [ -n "$data" ]; then
     curl -s -X "$method" "$BASE_URL$path" \
       -H "Content-Type: application/json" \
-      -H "x-tenant-id: $TENANT_ID" \
-      -H "x-user-id: $USER_ID" \
+      -b "$COOKIE_JAR" \
       -d "$data"
   else
     curl -s -X "$method" "$BASE_URL$path" \
       -H "Content-Type: application/json" \
-      -H "x-tenant-id: $TENANT_ID" \
-      -H "x-user-id: $USER_ID"
+      -b "$COOKIE_JAR"
   fi
 }
-
-echo "=== Layer 11 Smoke Test: AR/AP ==="
-echo ""
 
 # ---- SETUP: Create test customer and vendor ----
 echo "=== A: Setup - Create Test Parties ==="
 
+SUFFIX=$(date +%s)
+
 echo "A1: Creating test customer..."
-CUSTOMER_RESULT=$(api POST "/api/master/parties" '{
-  "name": "AR Test Customer",
-  "partyType": "customer",
-  "code": "ARTEST001"
-}')
+CUSTOMER_RESULT=$(api POST "/api/master/parties" "{
+  \"name\": \"AR Test Customer $SUFFIX\",
+  \"type\": \"customer\",
+  \"code\": \"ARTEST$SUFFIX\"
+}")
 CUSTOMER_ID=$(echo "$CUSTOMER_RESULT" | jq -r '.id // empty')
 if [ -z "$CUSTOMER_ID" ]; then
   echo "FAIL: Could not create customer"
@@ -55,11 +67,11 @@ fi
 echo "PASS: Created customer $CUSTOMER_ID"
 
 echo "A2: Creating test vendor..."
-VENDOR_RESULT=$(api POST "/api/master/parties" '{
-  "name": "AP Test Vendor",
-  "partyType": "vendor",
-  "code": "APTEST001"
-}')
+VENDOR_RESULT=$(api POST "/api/master/parties" "{
+  \"name\": \"AP Test Vendor $SUFFIX\",
+  \"type\": \"vendor\",
+  \"code\": \"APTEST$SUFFIX\"
+}")
 VENDOR_ID=$(echo "$VENDOR_RESULT" | jq -r '.id // empty')
 if [ -z "$VENDOR_ID" ]; then
   echo "FAIL: Could not create vendor"
@@ -72,16 +84,16 @@ echo "PASS: Created vendor $VENDOR_ID"
 echo ""
 echo "=== B: Create Posted Sales Invoices ==="
 
-echo "B1: Creating sales invoice INV-AR-001..."
-SINV1_RESULT=$(api POST "/api/sales/docs" '{
-  "docType": "invoice",
-  "docNumber": "INV-AR-001",
-  "partyId": "'$CUSTOMER_ID'",
-  "docDate": "2025-01-15",
-  "dueDate": "2025-02-14",
-  "totalAmount": "1000.00",
-  "currency": "USD"
-}')
+echo "B1: Creating sales invoice INV-AR-$SUFFIX..."
+SINV1_RESULT=$(api POST "/api/sales/docs" "{
+  \"docType\": \"invoice\",
+  \"docNumber\": \"INV-AR-$SUFFIX-001\",
+  \"partyId\": \"$CUSTOMER_ID\",
+  \"docDate\": \"2025-01-15\",
+  \"dueDate\": \"2025-02-14\",
+  \"totalAmount\": \"1000.00\",
+  \"currency\": \"USD\"
+}")
 SINV1_ID=$(echo "$SINV1_RESULT" | jq -r '.id // empty')
 if [ -z "$SINV1_ID" ]; then
   echo "FAIL: Could not create sales invoice 1"
@@ -99,16 +111,16 @@ if [ "$POST1_STATUS" != "posted" ]; then
 fi
 echo "PASS: Posted sales invoice 1"
 
-echo "B3: Creating sales invoice INV-AR-002..."
-SINV2_RESULT=$(api POST "/api/sales/docs" '{
-  "docType": "invoice",
-  "docNumber": "INV-AR-002",
-  "partyId": "'$CUSTOMER_ID'",
-  "docDate": "2025-01-20",
-  "dueDate": "2025-02-19",
-  "totalAmount": "500.00",
-  "currency": "USD"
-}')
+echo "B3: Creating sales invoice INV-AR-$SUFFIX-002..."
+SINV2_RESULT=$(api POST "/api/sales/docs" "{
+  \"docType\": \"invoice\",
+  \"docNumber\": \"INV-AR-$SUFFIX-002\",
+  \"partyId\": \"$CUSTOMER_ID\",
+  \"docDate\": \"2025-01-20\",
+  \"dueDate\": \"2025-02-19\",
+  \"totalAmount\": \"500.00\",
+  \"currency\": \"USD\"
+}")
 SINV2_ID=$(echo "$SINV2_RESULT" | jq -r '.id // empty')
 if [ -z "$SINV2_ID" ]; then
   echo "FAIL: Could not create sales invoice 2"
@@ -129,16 +141,16 @@ echo "PASS: Posted sales invoice 2"
 echo ""
 echo "=== C: Create Posted Purchase Invoices ==="
 
-echo "C1: Creating purchase invoice PINV-AP-001..."
-PINV1_RESULT=$(api POST "/api/procurement/docs" '{
-  "docType": "invoice",
-  "docNumber": "PINV-AP-001",
-  "partyId": "'$VENDOR_ID'",
-  "docDate": "2025-01-18",
-  "dueDate": "2025-02-17",
-  "totalAmount": "750.00",
-  "currency": "USD"
-}')
+echo "C1: Creating purchase invoice PINV-AP-$SUFFIX..."
+PINV1_RESULT=$(api POST "/api/procurement/docs" "{
+  \"docType\": \"invoice\",
+  \"docNumber\": \"PINV-AP-$SUFFIX\",
+  \"partyId\": \"$VENDOR_ID\",
+  \"docDate\": \"2025-01-18\",
+  \"dueDate\": \"2025-02-17\",
+  \"totalAmount\": \"750.00\",
+  \"currency\": \"USD\"
+}")
 PINV1_ID=$(echo "$PINV1_RESULT" | jq -r '.id // empty')
 if [ -z "$PINV1_ID" ]; then
   echo "FAIL: Could not create purchase invoice 1"
@@ -198,10 +210,9 @@ echo "E1: Create receipt payment for 600..."
 PAYMENT_RESULT=$(api POST "/api/finance/payments" '{
   "type": "receipt",
   "amount": "600.00",
-  "currency": "USD",
   "partyId": "'$CUSTOMER_ID'",
   "paymentDate": "2025-01-25",
-  "paymentMethod": "bank_transfer",
+  "method": "bank",
   "reference": "PAY-AR-TEST"
 }')
 PAYMENT_ID=$(echo "$PAYMENT_RESULT" | jq -r '.id // empty')
@@ -243,10 +254,9 @@ echo "F1: Try to over-allocate document..."
 OVER_ALLOC=$(api POST "/api/finance/payments" '{
   "type": "receipt",
   "amount": "2000.00",
-  "currency": "USD",
   "partyId": "'$CUSTOMER_ID'",
   "paymentDate": "2025-01-26",
-  "paymentMethod": "bank_transfer"
+  "method": "bank"
 }')
 OVER_PAY_ID=$(echo "$OVER_ALLOC" | jq -r '.id // empty')
 OVER_RESULT=$(api POST "/api/finance/payments/$OVER_PAY_ID/allocations" '{
@@ -262,14 +272,14 @@ fi
 echo "PASS: Correctly rejected over-allocation ($OVER_ERROR)"
 
 echo "F2: Try currency mismatch..."
-SINV_EUR=$(api POST "/api/sales/docs" '{
-  "docType": "invoice",
-  "docNumber": "INV-EUR-001",
-  "partyId": "'$CUSTOMER_ID'",
-  "docDate": "2025-01-27",
-  "totalAmount": "100.00",
-  "currency": "EUR"
-}')
+SINV_EUR=$(api POST "/api/sales/docs" "{
+  \"docType\": \"invoice\",
+  \"docNumber\": \"INV-EUR-$SUFFIX\",
+  \"partyId\": \"$CUSTOMER_ID\",
+  \"docDate\": \"2025-01-27\",
+  \"totalAmount\": \"100.00\",
+  \"currency\": \"EUR\"
+}")
 SINV_EUR_ID=$(echo "$SINV_EUR" | jq -r '.id // empty')
 api POST "/api/sales/docs/$SINV_EUR_ID/post" '{}' > /dev/null
 CURR_RESULT=$(api POST "/api/finance/payments/$OVER_PAY_ID/allocations" '{

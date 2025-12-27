@@ -10,10 +10,25 @@
 
 set -e
 
-TENANT_ID="21106d5d-71bb-4a2a-a0d8-1ea698d37989"
-USER_ID="2aaf5a1d-cd8d-4b36-8fcb-0f59c70ef7b4"
-BASE_URL="http://localhost:3000"
-CUST_ID="fe11f0ff-0957-4193-8184-8835cb983b92"
+BASE_URL="${BASE_URL:-http://localhost:3000}"
+COOKIE_JAR="${COOKIE_JAR:-/tmp/udp_smoke_cookies.txt}"
+
+echo "=== Layer 12.2 Smoke Test: Payment Unallocation ==="
+echo ""
+
+echo "=== Auth: Login as admin ==="
+rm -f "$COOKIE_JAR"
+curl -s -X POST "$BASE_URL/api/auth/bootstrap" > /dev/null 2>&1 || true
+LOGIN=$(curl -s -X POST "$BASE_URL/api/auth/login" \
+  -H "Content-Type: application/json" \
+  -c "$COOKIE_JAR" \
+  -d '{"email":"admin@local","password":"admin1234"}')
+if ! echo "$LOGIN" | jq -e '.success' > /dev/null 2>&1; then
+  echo "FAIL: Login failed: $LOGIN"
+  exit 1
+fi
+echo "PASS: Logged in as admin"
+echo ""
 
 api() {
   local method=$1
@@ -23,25 +38,32 @@ api() {
   if [ -n "$data" ]; then
     curl -s -X "$method" "$BASE_URL$path" \
       -H "Content-Type: application/json" \
-      -H "x-tenant-id: $TENANT_ID" \
-      -H "x-user-id: $USER_ID" \
+      -b "$COOKIE_JAR" \
       -d "$data"
   else
     curl -s -X "$method" "$BASE_URL$path" \
       -H "Content-Type: application/json" \
-      -H "x-tenant-id: $TENANT_ID" \
-      -H "x-user-id: $USER_ID"
+      -b "$COOKIE_JAR"
   fi
 }
 
-echo "=== Layer 12.2 Smoke Test: Payment Unallocation ==="
+echo "=== Setup: Create test customer ==="
+SUFFIX=$(date +%s)
+CUST_RESULT=$(api POST "/api/master/parties" "{\"name\": \"Unalloc Test Customer $SUFFIX\", \"type\": \"customer\", \"code\": \"UNALLOC$SUFFIX\"}")
+CUST_ID=$(echo "$CUST_RESULT" | jq -r '.id // empty')
+if [ -z "$CUST_ID" ]; then
+  echo "FAIL: Could not create customer"
+  echo "$CUST_RESULT"
+  exit 1
+fi
+echo "PASS: Created customer $CUST_ID"
 echo ""
 
 # Test 1: Create invoice, payment, allocate, then unallocate
 echo "=== Test 1: Unallocate by allocationId ==="
 
 echo "1a. Create sales invoice..."
-SINV=$(api POST "/api/sales/docs" "{\"docType\": \"invoice\", \"docNumber\": \"UNALLOC-INV-002\", \"partyId\": \"$CUST_ID\", \"docDate\": \"2025-01-15\", \"totalAmount\": \"250.00\", \"currency\": \"USD\"}")
+SINV=$(api POST "/api/sales/docs" "{\"docType\": \"invoice\", \"docNumber\": \"UNALLOC-$SUFFIX-001\", \"partyId\": \"$CUST_ID\", \"docDate\": \"2025-01-15\", \"totalAmount\": \"250.00\", \"currency\": \"USD\"}")
 SINV_ID=$(echo "$SINV" | jq -r '.id')
 echo "Created invoice $SINV_ID"
 
@@ -50,7 +72,7 @@ api POST "/api/sales/docs/$SINV_ID/post" '{}' > /dev/null
 echo "Invoice posted"
 
 echo "1c. Create draft receipt payment..."
-PAY=$(api POST "/api/finance/payments" "{\"type\": \"receipt\", \"amount\": \"250.00\", \"currency\": \"USD\", \"partyId\": \"$CUST_ID\", \"paymentDate\": \"2025-01-20\", \"method\": \"bank\", \"reference\": \"UNALLOC-TEST-003\"}")
+PAY=$(api POST "/api/finance/payments" "{\"type\": \"receipt\", \"amount\": \"250.00\", \"partyId\": \"$CUST_ID\", \"paymentDate\": \"2025-01-20\", \"method\": \"bank\", \"reference\": \"UNALLOC-$SUFFIX-001\"}")
 PAY_ID=$(echo "$PAY" | jq -r '.id')
 echo "Created payment $PAY_ID"
 
@@ -105,14 +127,14 @@ echo ""
 echo "=== Test 3: Block unallocation on posted payment ==="
 
 echo "3a. Create a new invoice for posted payment test..."
-SINV2=$(api POST "/api/sales/docs" "{\"docType\": \"invoice\", \"docNumber\": \"UNALLOC-INV-003\", \"partyId\": \"$CUST_ID\", \"docDate\": \"2025-01-15\", \"totalAmount\": \"300.00\", \"currency\": \"USD\"}")
+SINV2=$(api POST "/api/sales/docs" "{\"docType\": \"invoice\", \"docNumber\": \"UNALLOC-$SUFFIX-002\", \"partyId\": \"$CUST_ID\", \"docDate\": \"2025-01-15\", \"totalAmount\": \"300.00\", \"currency\": \"USD\"}")
 SINV2_ID=$(echo "$SINV2" | jq -r '.id')
 echo "Created invoice $SINV2_ID"
 api POST "/api/sales/docs/$SINV2_ID/post" '{}' > /dev/null
 echo "Invoice posted"
 
 echo "3b. Create new draft payment..."
-PAY3=$(api POST "/api/finance/payments" "{\"type\": \"receipt\", \"amount\": \"300.00\", \"currency\": \"USD\", \"partyId\": \"$CUST_ID\", \"paymentDate\": \"2025-01-22\", \"method\": \"bank\", \"reference\": \"UNALLOC-TEST-POSTED\"}")
+PAY3=$(api POST "/api/finance/payments" "{\"type\": \"receipt\", \"amount\": \"300.00\", \"partyId\": \"$CUST_ID\", \"paymentDate\": \"2025-01-22\", \"method\": \"bank\", \"reference\": \"UNALLOC-$SUFFIX-002\"}")
 PAY3_ID=$(echo "$PAY3" | jq -r '.id')
 echo "Created payment $PAY3_ID"
 
@@ -140,13 +162,13 @@ echo ""
 echo "=== Test 4: Unallocate by targetType + targetId ==="
 
 echo "4a. Create another invoice..."
-SINV4=$(api POST "/api/sales/docs" "{\"docType\": \"invoice\", \"docNumber\": \"UNALLOC-INV-004\", \"partyId\": \"$CUST_ID\", \"docDate\": \"2025-01-15\", \"totalAmount\": \"100.00\", \"currency\": \"USD\"}")
+SINV4=$(api POST "/api/sales/docs" "{\"docType\": \"invoice\", \"docNumber\": \"UNALLOC-$SUFFIX-003\", \"partyId\": \"$CUST_ID\", \"docDate\": \"2025-01-15\", \"totalAmount\": \"100.00\", \"currency\": \"USD\"}")
 SINV4_ID=$(echo "$SINV4" | jq -r '.id')
 echo "Created invoice $SINV4_ID"
 api POST "/api/sales/docs/$SINV4_ID/post" '{}' > /dev/null
 
 echo "4b. Create draft payment..."
-PAY4=$(api POST "/api/finance/payments" "{\"type\": \"receipt\", \"amount\": \"100.00\", \"currency\": \"USD\", \"partyId\": \"$CUST_ID\", \"paymentDate\": \"2025-01-21\", \"method\": \"cash\", \"reference\": \"UNALLOC-TEST-004\"}")
+PAY4=$(api POST "/api/finance/payments" "{\"type\": \"receipt\", \"amount\": \"100.00\", \"partyId\": \"$CUST_ID\", \"paymentDate\": \"2025-01-21\", \"method\": \"cash\", \"reference\": \"UNALLOC-$SUFFIX-003\"}")
 PAY4_ID=$(echo "$PAY4" | jq -r '.id')
 echo "Created payment $PAY4_ID"
 
