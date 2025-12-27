@@ -52,11 +52,11 @@ function PaymentsContent() {
   const searchParams = useSearchParams();
   const { addToast } = useToast();
 
-  // Filters from URL
-  const [from, setFrom] = React.useState(searchParams.get("from") || "");
-  const [to, setTo] = React.useState(searchParams.get("to") || "");
-  const [method, setMethod] = React.useState(searchParams.get("method") || "");
-  const [status, setStatus] = React.useState(searchParams.get("status") || "");
+  // Filters - sync with URL
+  const from = searchParams.get("from") || "";
+  const to = searchParams.get("to") || "";
+  const method = searchParams.get("method") || "";
+  const status = searchParams.get("status") || "";
 
   // Data
   const [payments, setPayments] = React.useState<Payment[]>([]);
@@ -117,15 +117,15 @@ function PaymentsContent() {
     loadParties();
   }, [loadData, loadParties]);
 
-  // Update URL when filters change
-  const applyFilters = () => {
-    const params = new URLSearchParams();
-    if (from) params.set("from", from);
-    if (to) params.set("to", to);
-    if (method) params.set("method", method);
-    if (status) params.set("status", status);
+  // Update URL (filters auto-reload via useEffect)
+  const updateFilter = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set(key, value);
+    } else {
+      params.delete(key);
+    }
     router.push(`/finance/payments?${params.toString()}`);
-    loadData();
   };
 
   // Create payment
@@ -211,7 +211,7 @@ function PaymentsContent() {
               label="From"
               type="date"
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(e) => updateFilter("from", e.target.value)}
             />
           </div>
           <div className="w-36">
@@ -219,14 +219,14 @@ function PaymentsContent() {
               label="To"
               type="date"
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              onChange={(e) => updateFilter("to", e.target.value)}
             />
           </div>
           <div className="w-28">
             <GlassSelect
               label="Method"
               value={method}
-              onChange={(e) => setMethod(e.target.value)}
+              onChange={(e) => updateFilter("method", e.target.value)}
               options={[
                 { value: "", label: "All" },
                 { value: "cash", label: "Cash" },
@@ -238,7 +238,7 @@ function PaymentsContent() {
             <GlassSelect
               label="Status"
               value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              onChange={(e) => updateFilter("status", e.target.value)}
               options={[
                 { value: "", label: "All" },
                 { value: "draft", label: "Draft" },
@@ -247,14 +247,40 @@ function PaymentsContent() {
               ]}
             />
           </div>
-          <GlassButton onClick={applyFilters} disabled={loading}>
-            {loading ? <Spinner size="sm" /> : "Search"}
-          </GlassButton>
+          {loading && <Spinner size="sm" />}
         </div>
       </GlassCard>
 
       {/* Error */}
       {error && <ErrorAlert message={error} onDismiss={() => setError(null)} />}
+
+      {/* Stats */}
+      {!loading && !error && payments.length > 0 && (
+        <div className="flex gap-3">
+          <div className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+            <span className="text-white/50 text-xs">Total</span>
+            <span className="ml-2 text-white font-medium">{payments.length}</span>
+          </div>
+          <div className="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+            <span className="text-emerald-400/70 text-xs">Receipts</span>
+            <span className="ml-2 text-emerald-400 font-medium">
+              {payments.filter((p) => p.type === "receipt").length}
+            </span>
+          </div>
+          <div className="px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
+            <span className="text-blue-400/70 text-xs">Payments</span>
+            <span className="ml-2 text-blue-400 font-medium">
+              {payments.filter((p) => p.type === "payment").length}
+            </span>
+          </div>
+          <div className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <span className="text-amber-400/70 text-xs">Draft</span>
+            <span className="ml-2 text-amber-400 font-medium">
+              {payments.filter((p) => p.status === "draft").length}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Table */}
       <GlassCard padding="none">

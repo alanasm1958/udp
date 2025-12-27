@@ -54,6 +54,7 @@ export default function PaymentDetailPage() {
   const [error, setError] = React.useState<string | null>(null);
 
   // Confirmation dialogs
+  const [postDialogOpen, setPostDialogOpen] = React.useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = React.useState(false);
   const [unallocateDialogOpen, setUnallocateDialogOpen] = React.useState(false);
   const [selectedAllocationId, setSelectedAllocationId] = React.useState<string | null>(null);
@@ -97,7 +98,8 @@ export default function PaymentDetailPage() {
         throw new Error(data.error || "Failed to post payment");
       }
 
-      addToast("success", "Payment posted successfully");
+      addToast("success", "Payment posted - journal entry created");
+      setPostDialogOpen(false);
       loadData();
     } catch (err) {
       addToast("error", err instanceof Error ? err.message : "Failed to post payment");
@@ -120,7 +122,7 @@ export default function PaymentDetailPage() {
         throw new Error(data.error || "Failed to void payment");
       }
 
-      addToast("success", "Payment voided successfully");
+      addToast("success", "Payment voided - journal entry reversed");
       setVoidDialogOpen(false);
       loadData();
     } catch (err) {
@@ -228,8 +230,8 @@ export default function PaymentDetailPage() {
         actions={
           <div className="flex gap-2">
             {p.status === "draft" && (
-              <GlassButton variant="primary" onClick={handlePost} disabled={actionLoading}>
-                {actionLoading ? <Spinner size="sm" /> : "Post"}
+              <GlassButton variant="primary" onClick={() => setPostDialogOpen(true)} disabled={actionLoading}>
+                Post
               </GlassButton>
             )}
             {p.status === "posted" && (
@@ -334,6 +336,17 @@ export default function PaymentDetailPage() {
           emptyMessage="No allocations yet. Allocate this payment to invoices to apply it."
         />
       </GlassCard>
+
+      {/* Post Confirmation Dialog */}
+      <ConfirmDialog
+        open={postDialogOpen}
+        onClose={() => setPostDialogOpen(false)}
+        onConfirm={handlePost}
+        title="Post Payment"
+        message={`Post this ${p.type === "receipt" ? "receipt" : "payment"} for ${formatCurrency(parseFloat(p.amount))}? This will create a journal entry.`}
+        confirmLabel="Post Payment"
+        loading={actionLoading}
+      />
 
       {/* Void Confirmation Dialog */}
       <ConfirmDialog

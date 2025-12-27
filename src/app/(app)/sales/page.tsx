@@ -51,9 +51,9 @@ function SalesContent() {
   const searchParams = useSearchParams();
   const { addToast } = useToast();
 
-  // Filters
-  const [docType, setDocType] = React.useState(searchParams.get("docType") || "");
-  const [status, setStatus] = React.useState(searchParams.get("status") || "");
+  // Filters - sync with URL
+  const docType = searchParams.get("docType") || "";
+  const status = searchParams.get("status") || "";
 
   // Data
   const [docs, setDocs] = React.useState<SalesDoc[]>([]);
@@ -117,13 +117,15 @@ function SalesContent() {
     loadParties();
   }, [loadData, loadParties]);
 
-  // Update URL
-  const applyFilters = () => {
-    const params = new URLSearchParams();
-    if (docType) params.set("docType", docType);
-    if (status) params.set("status", status);
+  // Update URL (filters auto-reload via useEffect)
+  const updateFilter = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) {
+      params.set(key, value);
+    } else {
+      params.delete(key);
+    }
     router.push(`/sales?${params.toString()}`);
-    loadData();
   };
 
   // Create document
@@ -219,7 +221,7 @@ function SalesContent() {
             <GlassSelect
               label="Type"
               value={docType}
-              onChange={(e) => setDocType(e.target.value)}
+              onChange={(e) => updateFilter("docType", e.target.value)}
               options={[
                 { value: "", label: "All" },
                 { value: "quote", label: "Quote" },
@@ -232,7 +234,7 @@ function SalesContent() {
             <GlassSelect
               label="Status"
               value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              onChange={(e) => updateFilter("status", e.target.value)}
               options={[
                 { value: "", label: "All" },
                 { value: "draft", label: "Draft" },
@@ -241,20 +243,40 @@ function SalesContent() {
               ]}
             />
           </div>
-          <GlassButton onClick={applyFilters} disabled={loading}>
-            {loading ? <Spinner size="sm" /> : "Search"}
-          </GlassButton>
+          {loading && <Spinner size="sm" />}
         </div>
       </GlassCard>
 
       {/* Error */}
       {error && <ErrorAlert message={error} onDismiss={() => setError(null)} />}
 
+      {/* Stats */}
+      {!loading && !error && docs.length > 0 && (
+        <div className="flex gap-3">
+          <div className="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10">
+            <span className="text-white/50 text-xs">Total</span>
+            <span className="ml-2 text-white font-medium">{docs.length}</span>
+          </div>
+          <div className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+            <span className="text-amber-400/70 text-xs">Draft</span>
+            <span className="ml-2 text-amber-400 font-medium">
+              {docs.filter((d) => d.status === "draft").length}
+            </span>
+          </div>
+          <div className="px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+            <span className="text-emerald-400/70 text-xs">Posted</span>
+            <span className="ml-2 text-emerald-400 font-medium">
+              {docs.filter((d) => d.status === "posted").length}
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <GlassCard padding="none">
         {loading ? (
           <div className="p-6">
-            <SkeletonTable rows={6} columns={6} />
+            <SkeletonTable rows={6} columns={7} />
           </div>
         ) : (
           <GlassTable
