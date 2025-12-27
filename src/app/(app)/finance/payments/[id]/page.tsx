@@ -7,9 +7,12 @@ import {
   GlassButton,
   GlassTable,
   GlassBadge,
+  GlassInput,
+  GlassSelect,
   PageHeader,
   Spinner,
   ConfirmDialog,
+  SlideOver,
   ErrorAlert,
   Skeleton,
   useToast,
@@ -42,6 +45,14 @@ interface PaymentDetail {
   allocations: Allocation[];
 }
 
+interface Document {
+  id: string;
+  docNumber: string;
+  docType: string;
+  totalAmount: string;
+  partyName?: string;
+}
+
 export default function PaymentDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -58,6 +69,15 @@ export default function PaymentDetailPage() {
   const [voidDialogOpen, setVoidDialogOpen] = React.useState(false);
   const [unallocateDialogOpen, setUnallocateDialogOpen] = React.useState(false);
   const [selectedAllocationId, setSelectedAllocationId] = React.useState<string | null>(null);
+
+  // Allocation form
+  const [allocateOpen, setAllocateOpen] = React.useState(false);
+  const [allocating, setAllocating] = React.useState(false);
+  const [documents, setDocuments] = React.useState<Document[]>([]);
+  const [allocForm, setAllocForm] = React.useState({
+    targetId: "",
+    amount: "",
+  });
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -83,6 +103,69 @@ export default function PaymentDetailPage() {
   React.useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Load documents for allocation (depends on payment type)
+  const loadDocuments = React.useCallback(async () => {
+    if (!data?.payment) return;
+
+    const docType = data.payment.type === "receipt" ? "sales" : "procurement";
+    const endpoint = docType === "sales" ? "/api/sales/docs?status=posted" : "/api/procurement/docs?status=posted";
+
+    try {
+      const res = await fetch(endpoint);
+      if (res.ok) {
+        const result = await res.json();
+        setDocuments(result.items || []);
+      }
+    } catch {
+      // Silently fail
+    }
+  }, [data?.payment]);
+
+  React.useEffect(() => {
+    if (allocateOpen) {
+      loadDocuments();
+    }
+  }, [allocateOpen, loadDocuments]);
+
+  // Allocate handler
+  const handleAllocate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!data?.payment) return;
+
+    setAllocating(true);
+    try {
+      const targetType = data.payment.type === "receipt" ? "sales_doc" : "purchase_doc";
+
+      const res = await fetch(`/api/finance/payments/${id}/allocations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          allocations: [
+            {
+              targetType,
+              targetId: allocForm.targetId,
+              amount: allocForm.amount,
+            },
+          ],
+        }),
+      });
+
+      if (!res.ok) {
+        const result = await res.json();
+        throw new Error(result.error || "Failed to allocate");
+      }
+
+      addToast("success", "Payment allocated successfully");
+      setAllocateOpen(false);
+      setAllocForm({ targetId: "", amount: "" });
+      loadData();
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "Failed to allocate");
+    } finally {
+      setAllocating(false);
+    }
+  };
 
   const handlePost = async () => {
     setActionLoading(true);
@@ -303,9 +386,16 @@ export default function PaymentDetailPage() {
 
       {/* Allocations */}
       <GlassCard padding="none">
-        <div className="p-4 border-b border-white/10">
-          <h2 className="text-lg font-semibold text-white">Allocations</h2>
-          <p className="text-sm text-white/50">Invoices and documents this payment is applied to</p>
+        <div className="p-4 border-b border-white/10 flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Allocations</h2>
+            <p className="text-sm text-white/50">Invoices and documents this payment is applied to</p>
+          </div>
+          {p.status === "draft" && unallocatedAmount > 0 && (
+            <GlassButton size="sm" onClick={() => setAllocateOpen(true)}>
+              + Allocate
+            </GlassButton>
+          )}
         </div>
         <GlassTable
           headers={["Document Type", "Document ID", "Amount", ""]}
@@ -374,6 +464,68 @@ export default function PaymentDetailPage() {
         variant="danger"
         loading={actionLoading}
       />
+
+      {/* Allocate SlideOver */}
+      <SlideOver
+        open={allocateOpen}
+        onClose={() => setAllocateOpen(false)}
+        title="Allocate Payment"
+      >
+        <form onSubmit={handleAllocate} className="space-y-4">
+          <div className="p-3 bg-white/5 rounded-lg">
+            <span className="text-white/50 text-sm">Unallocated: </span>
+            <span className="text-amber-400 font-mono">{formatCurrency(unallocatedAmount)}</span>
+          </div>
+
+          <GlassSelect
+            label={p.type === "receipt" ? "Sales Invoice" : "Purchase Invoice"}
+            value={allocForm.targetId}
+            onChange={(e) => setAllocForm({ ...allocForm, targetId: e.target.value })}
+            options={[
+              { value: "", label: "Select invoice..." },
+              ...documents.map((d) => ({
+                value: d.id,
+                label: `${d.docNumber} - ${formatCurrency(parseFloat(d.totalAmount))}`,
+              })),
+            ]}
+          />
+          {documents.length === 0 && (
+            <p className="text-xs text-white/50">
+              No posted invoices found. Post invoices first to allocate payments.
+            </p>
+          )}
+
+          <GlassInput
+            label="Amount"
+            type="number"
+            step="0.01"
+            min="0.01"
+            max={unallocatedAmount.toString()}
+            value={allocForm.amount}
+            onChange={(e) => setAllocForm({ ...allocForm, amount: e.target.value })}
+            placeholder={unallocatedAmount.toFixed(2)}
+          />
+
+          <div className="pt-4 flex gap-3">
+            <GlassButton
+              type="button"
+              variant="ghost"
+              onClick={() => setAllocateOpen(false)}
+              className="flex-1"
+            >
+              Cancel
+            </GlassButton>
+            <GlassButton
+              type="submit"
+              variant="primary"
+              disabled={allocating || !allocForm.targetId || !allocForm.amount}
+              className="flex-1"
+            >
+              {allocating ? <Spinner size="sm" /> : "Allocate"}
+            </GlassButton>
+          </div>
+        </form>
+      </SlideOver>
     </div>
   );
 }

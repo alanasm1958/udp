@@ -7,8 +7,12 @@ import {
   GlassButton,
   GlassTable,
   GlassBadge,
+  GlassInput,
+  GlassSelect,
   PageHeader,
   Spinner,
+  SlideOver,
+  useToast,
 } from "@/components/ui/glass";
 import { apiGet, apiPost, formatCurrency, formatDate } from "@/lib/http";
 
@@ -48,17 +52,37 @@ interface Receipt {
   createdAt: string;
 }
 
+interface Product {
+  id: string;
+  sku: string | null;
+  name: string;
+  type: string;
+  defaultPurchaseCost: string | null;
+}
+
 export default function PurchaseDocDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const { addToast } = useToast();
   const id = params.id as string;
 
   const [doc, setDoc] = React.useState<PurchaseDoc | null>(null);
   const [lines, setLines] = React.useState<PurchaseDocLine[]>([]);
   const [receipts, setReceipts] = React.useState<Receipt[]>([]);
+  const [products, setProducts] = React.useState<Product[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [actionLoading, setActionLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Add line form
+  const [addLineOpen, setAddLineOpen] = React.useState(false);
+  const [addingLine, setAddingLine] = React.useState(false);
+  const [lineForm, setLineForm] = React.useState({
+    productId: "",
+    description: "",
+    quantity: "1",
+    unitPrice: "0",
+  });
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -84,9 +108,81 @@ export default function PurchaseDocDetailPage() {
     }
   }, [id]);
 
+  // Load products for the dropdown
+  const loadProducts = React.useCallback(async () => {
+    try {
+      const res = await fetch("/api/master/products?limit=100");
+      if (res.ok) {
+        const data = await res.json();
+        setProducts(data.items || []);
+      }
+    } catch {
+      // Silently fail
+    }
+  }, []);
+
   React.useEffect(() => {
     loadData();
-  }, [loadData]);
+    loadProducts();
+  }, [loadData, loadProducts]);
+
+  // Handle product selection - auto-fill description and cost
+  const handleProductChange = (productId: string) => {
+    const product = products.find((p) => p.id === productId);
+    if (product) {
+      setLineForm({
+        ...lineForm,
+        productId,
+        description: product.name,
+        unitPrice: product.defaultPurchaseCost || "0",
+      });
+    } else {
+      setLineForm({ ...lineForm, productId });
+    }
+  };
+
+  // Add line handler
+  const handleAddLine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAddingLine(true);
+
+    try {
+      const qty = parseFloat(lineForm.quantity) || 1;
+      const price = parseFloat(lineForm.unitPrice) || 0;
+      const lineTotal = (qty * price).toFixed(2);
+
+      const res = await fetch(`/api/procurement/docs/${id}/lines`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: lineForm.productId || undefined,
+          description: lineForm.description,
+          quantity: lineForm.quantity,
+          unitPrice: lineForm.unitPrice,
+          lineTotal,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to add line");
+      }
+
+      addToast("success", "Line added successfully");
+      setAddLineOpen(false);
+      setLineForm({
+        productId: "",
+        description: "",
+        quantity: "1",
+        unitPrice: "0",
+      });
+      loadData();
+    } catch (err) {
+      addToast("error", err instanceof Error ? err.message : "Failed to add line");
+    } finally {
+      setAddingLine(false);
+    }
+  };
 
   const handlePost = async () => {
     setActionLoading(true);
@@ -201,8 +297,13 @@ export default function PurchaseDocDetailPage() {
 
       {/* Lines */}
       <GlassCard padding="none">
-        <div className="p-4 border-b border-white/10">
+        <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">Lines</h2>
+          {doc.status === "draft" && (
+            <GlassButton size="sm" onClick={() => setAddLineOpen(true)}>
+              + Add Line
+            </GlassButton>
+          )}
         </div>
         <GlassTable
           headers={["#", "Description", "Qty", "Unit Price", "Total"]}
@@ -236,6 +337,81 @@ export default function PurchaseDocDetailPage() {
           />
         </GlassCard>
       )}
+
+      {/* Add Line SlideOver */}
+      <SlideOver
+        open={addLineOpen}
+        onClose={() => setAddLineOpen(false)}
+        title="Add Line"
+      >
+        <form onSubmit={handleAddLine} className="space-y-4">
+          <GlassSelect
+            label="Product (Optional)"
+            value={lineForm.productId}
+            onChange={(e) => handleProductChange(e.target.value)}
+            options={[
+              { value: "", label: "Select product..." },
+              ...products.map((p) => ({ value: p.id, label: `${p.sku || "N/A"} - ${p.name}` })),
+            ]}
+          />
+
+          <GlassInput
+            label="Description"
+            value={lineForm.description}
+            onChange={(e) => setLineForm({ ...lineForm, description: e.target.value })}
+            placeholder="Line description"
+            required
+          />
+
+          <div className="grid grid-cols-2 gap-4">
+            <GlassInput
+              label="Quantity"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={lineForm.quantity}
+              onChange={(e) => setLineForm({ ...lineForm, quantity: e.target.value })}
+              required
+            />
+
+            <GlassInput
+              label="Unit Cost"
+              type="number"
+              step="0.01"
+              min="0"
+              value={lineForm.unitPrice}
+              onChange={(e) => setLineForm({ ...lineForm, unitPrice: e.target.value })}
+              required
+            />
+          </div>
+
+          <div className="p-3 bg-white/5 rounded-lg">
+            <span className="text-white/50 text-sm">Line Total: </span>
+            <span className="text-white font-mono">
+              {formatCurrency((parseFloat(lineForm.quantity) || 0) * (parseFloat(lineForm.unitPrice) || 0))}
+            </span>
+          </div>
+
+          <div className="pt-4 flex gap-3">
+            <GlassButton
+              type="button"
+              variant="ghost"
+              onClick={() => setAddLineOpen(false)}
+              className="flex-1"
+            >
+              Cancel
+            </GlassButton>
+            <GlassButton
+              type="submit"
+              variant="primary"
+              disabled={addingLine || !lineForm.description}
+              className="flex-1"
+            >
+              {addingLine ? <Spinner size="sm" /> : "Add Line"}
+            </GlassButton>
+          </div>
+        </form>
+      </SlideOver>
     </div>
   );
 }
