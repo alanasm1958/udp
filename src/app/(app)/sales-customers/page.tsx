@@ -493,12 +493,14 @@ function EntryCard({ href, icon, label, description, color, onClick }: EntryCard
   );
 }
 
+type ViewFilterType = "all" | "invoices" | "quotes" | "leads" | "customers" | "partners" | "salespersons";
+
 interface QuickAccessSectionProps {
-  onNavigate: (view: "sales-documents" | "people-parties", filter: string) => void;
+  onNavigate: (view: "sales-documents" | "people-parties", filter: ViewFilterType) => void;
 }
 
 function QuickAccessSection({ onNavigate }: QuickAccessSectionProps) {
-  const entries: Array<EntryCardProps & { view: "sales-documents" | "people-parties"; filter: string }> = [
+  const entries: Array<EntryCardProps & { view: "sales-documents" | "people-parties"; filter: ViewFilterType }> = [
     {
       href: "#",
       icon: Icons.invoice,
@@ -583,7 +585,7 @@ function SalesCustomersPageContent() {
   const [loading, setLoading] = React.useState(true);
   const [recordActivityOpen, setRecordActivityOpen] = React.useState(false);
   const [activeView, setActiveView] = React.useState<"overview" | "sales-documents" | "people-parties">("overview");
-  const [viewFilter, setViewFilter] = React.useState<string>("all");
+  const [viewFilter, setViewFilter] = React.useState<ViewFilterType>("all");
 
   // Load metrics, tasks, and alerts
   React.useEffect(() => {
@@ -737,7 +739,7 @@ function SalesCustomersPageContent() {
               ← Back to Overview
             </GlassButton>
           </div>
-          <SalesDocumentsTab initialView={viewFilter as any} />
+          <SalesDocumentsTab initialView={viewFilter as "all" | "invoices" | "quotes" | "leads"} />
         </div>
       )}
 
@@ -749,7 +751,7 @@ function SalesCustomersPageContent() {
               ← Back to Overview
             </GlassButton>
           </div>
-          <PeoplePartiesTab initialView={viewFilter as any} />
+          <PeoplePartiesTab initialView={viewFilter as "all" | "customers" | "partners" | "salespersons"} />
         </div>
       )}
 
