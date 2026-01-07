@@ -9,19 +9,21 @@ import { db } from "@/db";
 import { tenantSubscriptions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
-export type PlanCode = "free" | "starter" | "pro";
-export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance";
+export type PlanCode = "free" | "monthly_30" | "six_month_pack_25" | "promo_free_6m";
+export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance" | "ai";
 
 /**
  * Plan capabilities map
  * - free: dashboard + reports only
- * - starter: + sales, procurement, inventory
- * - pro: + finance (posting, payments, AR/AP)
+ * - monthly_30: full access billed monthly
+ * - six_month_pack_25: full access 6-month package
+ * - promo_free_6m: promotional full access for 6 months
  */
 const PLAN_CAPABILITIES: Record<PlanCode, Capability[]> = {
   free: ["reports"],
-  starter: ["reports", "sales", "procurement", "inventory"],
-  pro: ["reports", "sales", "procurement", "inventory", "finance"],
+  monthly_30: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
+  six_month_pack_25: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
+  promo_free_6m: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
 };
 
 export interface TenantSubscription {
@@ -133,6 +135,9 @@ export function getCapabilityFromPath(pathname: string): Capability | null {
   // Admin routes - no capability check (role-based only)
   if (pathname.startsWith("/api/admin/")) return null;
 
+  // AI routes - require AI capability
+  if (pathname.startsWith("/api/ai/")) return "ai";
+
   // Default: no specific capability needed
   return null;
 }
@@ -204,4 +209,21 @@ export async function checkSubscriptionAccess(
     isActive: true,
     planCode: sub.planCode,
   };
+}
+
+/**
+ * Check if tenant can use AI Copilot
+ */
+export async function canUseAI(tenantId: string): Promise<boolean> {
+  // In development/test, always allow AI
+  if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
+    return true;
+  }
+
+  const sub = await getTenantSubscription(tenantId);
+  if (!sub || !hasActiveSubscription(sub)) {
+    return false;
+  }
+
+  return planAllows(sub.planCode, "ai");
 }

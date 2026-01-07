@@ -43,6 +43,83 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const { tenantName, adminName, email, password, planCode }: SignupRequest = parseResult.data;
     const normalizedEmail = email.toLowerCase().trim();
 
+    // Ensure subscription plans are seeded (idempotent)
+    // Plans must match scripts/seed/subscription_plans.ts
+    const plansToSeed = [
+      {
+        code: "free",
+        name: "Free",
+        description: "Basic features, free forever.",
+        priceAmount: "0.00",
+        billingType: "recurring" as const,
+        interval: "month",
+        intervalCount: 1,
+        currency: "USD",
+        stripePriceId: null,
+        isActive: true,
+        trialDays: null,
+        durationMonths: null,
+        isPromotional: false,
+      },
+      {
+        code: "monthly_30",
+        name: "Monthly",
+        description: "Full access billed monthly. Cancel anytime.",
+        priceAmount: "30.00",
+        billingType: "recurring" as const,
+        interval: "month",
+        intervalCount: 1,
+        currency: "USD",
+        stripePriceId: null,
+        isActive: true,
+        trialDays: null,
+        durationMonths: null,
+        isPromotional: false,
+      },
+      {
+        code: "six_month_pack_25",
+        name: "6-Month Package",
+        description: "Best value - $25/month billed upfront for 6 months.",
+        priceAmount: "150.00",
+        billingType: "recurring" as const,
+        interval: "month",
+        intervalCount: 6,
+        durationMonths: 6,
+        currency: "USD",
+        stripePriceId: null,
+        isActive: true,
+        trialDays: null,
+        isPromotional: false,
+      },
+      {
+        code: "promo_free_6m",
+        name: "Limited Offer",
+        description: "6 months free - promotional offer. Ends March 2026.",
+        priceAmount: "0.00",
+        billingType: "trial" as const,
+        interval: "month",
+        intervalCount: 6,
+        trialDays: 180,
+        durationMonths: 6,
+        isPromotional: true,
+        currency: "USD",
+        stripePriceId: null,
+        isActive: true,
+      },
+    ];
+
+    for (const planData of plansToSeed) {
+      const [existingPlan] = await db
+        .select({ id: subscriptionPlans.id })
+        .from(subscriptionPlans)
+        .where(eq(subscriptionPlans.code, planData.code))
+        .limit(1);
+
+      if (!existingPlan) {
+        await db.insert(subscriptionPlans).values(planData);
+      }
+    }
+
     // Validate plan exists
     const [plan] = await db
       .select({
@@ -63,7 +140,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
     if (!plan) {
       return NextResponse.json(
-        { error: "Invalid plan code" },
+        { error: `Invalid plan code: ${planCode}. Available plans: ${plansToSeed.map((p) => p.code).join(", ")}` },
         { status: 400 }
       );
     }

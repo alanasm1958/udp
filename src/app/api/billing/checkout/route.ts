@@ -126,11 +126,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     let trialDays: number | undefined;
 
     if (plan.billingType === "trial") {
-      // For trial offers, use the MONTHLY_30 price with trial period
+      // For trial offers, use the monthly_30 price with trial period
       const [monthlyPlan] = await db
         .select()
         .from(subscriptionPlans)
-        .where(eq(subscriptionPlans.code, "MONTHLY_30"))
+        .where(eq(subscriptionPlans.code, "monthly_30"))
         .limit(1);
 
       if (monthlyPlan?.stripePriceId) {
@@ -205,7 +205,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const now = new Date();
         await db.insert(tenantSubscriptions).values({
           tenantId,
-          planCode: "MONTHLY_30", // Will be updated by webhook
+          planCode: "monthly_30", // Will be updated by webhook
           status: "trialing",
           isCurrent: true,
           startedAt: now,
