@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { journalEntries, journalLines, accounts } from "@/db/schema";
+import { accounts } from "@/db/schema";
 import { eq, and, ilike, or } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -15,7 +15,7 @@ import {
   TenantError,
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
-import { createAuditContext, logAuditEvent } from "@/lib/audit";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 interface CreateCapitalRequest {
   capitalType: "contribution" | "distribution";
@@ -35,7 +35,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const actorIdHeader = getActorIdFromHeaders(req);
     const userIdHeader = getUserIdFromHeaders(req);
     const { actorId } = await resolveActor(tenantId, actorIdHeader, userIdHeader);
-    const ctx = createAuditContext(tenantId, actorId);
 
     const body: CreateCapitalRequest = await req.json();
     const { capitalType, method, capitalDate, amount, memo } = body;
@@ -93,82 +92,60 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Create journal entry
+    // Build journal entry lines
+    // Contribution: Debit Cash, Credit Owner's Equity
+    // Distribution: Debit Owner's Equity, Credit Cash
     const description = capitalType === "contribution"
       ? "Owner Capital Contribution"
       : "Owner Distribution";
 
-    const [entry] = await db
-      .insert(journalEntries)
-      .values({
-        tenantId,
-        postingDate: capitalDate,
-        memo: memo || description,
-        postedByActorId: actorId,
-      })
-      .returning();
-
-    // Create journal lines
-    // Contribution: Debit Cash, Credit Owner's Equity
-    // Distribution: Debit Owner's Equity, Credit Cash
     const lines = capitalType === "contribution"
       ? [
           {
-            journalEntryId: entry.id,
-            tenantId,
             accountId: cashAccount[0].id,
+            debit: amountNum,
+            credit: 0,
             description,
-            debit: amountNum.toFixed(2),
-            credit: "0.00",
-            lineNo: 1,
           },
           {
-            journalEntryId: entry.id,
-            tenantId,
             accountId: capitalAccount[0].id,
+            debit: 0,
+            credit: amountNum,
             description,
-            debit: "0.00",
-            credit: amountNum.toFixed(2),
-            lineNo: 2,
           },
         ]
       : [
           {
-            journalEntryId: entry.id,
-            tenantId,
             accountId: capitalAccount[0].id,
+            debit: amountNum,
+            credit: 0,
             description,
-            debit: amountNum.toFixed(2),
-            credit: "0.00",
-            lineNo: 1,
           },
           {
-            journalEntryId: entry.id,
-            tenantId,
             accountId: cashAccount[0].id,
+            debit: 0,
+            credit: amountNum,
             description,
-            debit: "0.00",
-            credit: amountNum.toFixed(2),
-            lineNo: 2,
           },
         ];
 
-    await db.insert(journalLines).values(lines);
-
-    await logAuditEvent({
-      ...ctx,
-      action: "capital_recorded",
-      entityType: "journal_entry",
-      entityId: entry.id,
-      metadata: {
-        capitalType,
-        amount: amountNum,
-      },
+    // Use the posting service to create journal entry
+    const result = await createSimpleLedgerEntry({
+      tenantId,
+      actorId,
+      postingDate: capitalDate,
+      memo: memo || description,
+      source: "capital",
+      lines,
     });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
-      journalEntryId: entry.id,
+      journalEntryId: result.journalEntryId,
       capital: {
         type: capitalType,
         amount: amountNum,

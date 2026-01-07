@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { journalEntries, journalLines, accounts } from "@/db/schema";
+import { accounts } from "@/db/schema";
 import { eq, and, ilike } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -15,7 +15,7 @@ import {
   TenantError,
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
-import { createAuditContext, logAuditEvent } from "@/lib/audit";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 interface CreateTransferRequest {
   fromAccount: string;
@@ -42,7 +42,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const actorIdHeader = getActorIdFromHeaders(req);
     const userIdHeader = getUserIdFromHeaders(req);
     const { actorId } = await resolveActor(tenantId, actorIdHeader, userIdHeader);
-    const ctx = createAuditContext(tenantId, actorId);
 
     const body: CreateTransferRequest = await req.json();
     const { fromAccount, toAccount, transferDate, amount, memo } = body;
@@ -101,54 +100,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Create journal entry
-    const [entry] = await db
-      .insert(journalEntries)
-      .values({
-        tenantId,
-        postingDate: transferDate,
-        memo: memo || `Transfer from ${fromAccountRecord[0].name} to ${toAccountRecord[0].name}`,
-        postedByActorId: actorId,
-      })
-      .returning();
-
-    // Create journal lines (debit to account, credit from account)
-    await db.insert(journalLines).values([
-      {
-        journalEntryId: entry.id,
-        tenantId,
-        accountId: toAccountRecord[0].id,
-        description: `Transfer from ${fromAccountRecord[0].name}`,
-        debit: amountNum.toFixed(2),
-        credit: "0.00",
-        lineNo: 1,
-      },
-      {
-        journalEntryId: entry.id,
-        tenantId,
-        accountId: fromAccountRecord[0].id,
-        description: `Transfer to ${toAccountRecord[0].name}`,
-        debit: "0.00",
-        credit: amountNum.toFixed(2),
-        lineNo: 2,
-      },
-    ]);
-
-    await logAuditEvent({
-      ...ctx,
-      action: "transfer_recorded",
-      entityType: "journal_entry",
-      entityId: entry.id,
-      metadata: {
-        fromAccount: fromAccountRecord[0].name,
-        toAccount: toAccountRecord[0].name,
-        amount: amountNum,
-      },
+    // Use the posting service to create journal entry
+    const result = await createSimpleLedgerEntry({
+      tenantId,
+      actorId,
+      postingDate: transferDate,
+      memo: memo || `Transfer from ${fromAccountRecord[0].name} to ${toAccountRecord[0].name}`,
+      source: "transfer",
+      lines: [
+        {
+          accountId: toAccountRecord[0].id,
+          debit: amountNum,
+          credit: 0,
+          description: `Transfer from ${fromAccountRecord[0].name}`,
+        },
+        {
+          accountId: fromAccountRecord[0].id,
+          debit: 0,
+          credit: amountNum,
+          description: `Transfer to ${toAccountRecord[0].name}`,
+        },
+      ],
     });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
-      journalEntryId: entry.id,
+      journalEntryId: result.journalEntryId,
       transfer: {
         fromAccount: fromAccountRecord[0].name,
         toAccount: toAccountRecord[0].name,

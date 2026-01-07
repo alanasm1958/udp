@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { journalEntries, journalLines, accounts } from "@/db/schema";
+import { accounts } from "@/db/schema";
 import { eq, and, ilike } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -15,7 +15,7 @@ import {
   TenantError,
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
-import { createAuditContext, logAuditEvent } from "@/lib/audit";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 interface CreateExpenseRequest {
   category: string;
@@ -51,7 +51,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const actorIdHeader = getActorIdFromHeaders(req);
     const userIdHeader = getUserIdFromHeaders(req);
     const { actorId } = await resolveActor(tenantId, actorIdHeader, userIdHeader);
-    const ctx = createAuditContext(tenantId, actorId);
 
     const body: CreateExpenseRequest = await req.json();
     const { category, description, method, expenseDate, amount, memo } = body;
@@ -106,54 +105,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Create journal entry
-    const [entry] = await db
-      .insert(journalEntries)
-      .values({
-        tenantId,
-        postingDate: expenseDate,
-        memo: memo || `Expense: ${description}`,
-        postedByActorId: actorId,
-      })
-      .returning();
-
-    // Create journal lines
-    await db.insert(journalLines).values([
-      {
-        journalEntryId: entry.id,
-        tenantId,
-        accountId: expenseAccount[0].id,
-        description: description,
-        debit: amountNum.toFixed(2),
-        credit: "0.00",
-        lineNo: 1,
-      },
-      {
-        journalEntryId: entry.id,
-        tenantId,
-        accountId: cashAccount[0].id,
-        description: description,
-        debit: "0.00",
-        credit: amountNum.toFixed(2),
-        lineNo: 2,
-      },
-    ]);
-
-    await logAuditEvent({
-      ...ctx,
-      action: "expense_recorded",
-      entityType: "journal_entry",
-      entityId: entry.id,
-      metadata: {
-        category,
-        description,
-        amount: amountNum,
-      },
+    // Use the posting service to create journal entry
+    const result = await createSimpleLedgerEntry({
+      tenantId,
+      actorId,
+      postingDate: expenseDate,
+      memo: memo || `Expense: ${description}`,
+      source: "expense",
+      lines: [
+        {
+          accountId: expenseAccount[0].id,
+          debit: amountNum,
+          credit: 0,
+          description: description,
+        },
+        {
+          accountId: cashAccount[0].id,
+          debit: 0,
+          credit: amountNum,
+          description: description,
+        },
+      ],
     });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
-      journalEntryId: entry.id,
+      journalEntryId: result.journalEntryId,
       expense: {
         category,
         description,

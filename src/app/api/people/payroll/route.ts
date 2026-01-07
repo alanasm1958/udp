@@ -6,16 +6,16 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { journalEntries, journalLines, accounts } from "@/db/schema";
+import { accounts } from "@/db/schema";
 import { eq, and, ilike, or } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
   getActorIdFromHeaders,
+  getUserIdFromHeaders,
   TenantError,
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
-import { createAuditContext, logAuditEvent } from "@/lib/audit";
-import { getUserIdFromHeaders } from "@/lib/tenant";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 interface CreatePayrollRequest {
   payPeriod: string; // YYYY-MM
@@ -34,7 +34,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const actorIdHeader = getActorIdFromHeaders(req);
     const userIdHeader = getUserIdFromHeaders(req);
     const { actorId } = await resolveActor(tenantId, actorIdHeader, userIdHeader);
-    const ctx = createAuditContext(tenantId, actorId);
 
     const body: CreatePayrollRequest = await req.json();
     const { payPeriod, payDate, totalAmount, notes } = body;
@@ -92,54 +91,36 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // Create journal entry
-    const [entry] = await db
-      .insert(journalEntries)
-      .values({
-        tenantId,
-        postingDate: payDate,
-        memo: notes || `Payroll for ${payPeriod}`,
-        postedByActorId: actorId,
-      })
-      .returning();
-
-    // Create journal lines (Debit Payroll Expense, Credit Cash)
-    await db.insert(journalLines).values([
-      {
-        journalEntryId: entry.id,
-        tenantId,
-        accountId: payrollAccount[0].id,
-        description: `Payroll expense for ${payPeriod}`,
-        debit: amountNum.toFixed(2),
-        credit: "0.00",
-        lineNo: 1,
-      },
-      {
-        journalEntryId: entry.id,
-        tenantId,
-        accountId: cashAccount[0].id,
-        description: `Payroll payment for ${payPeriod}`,
-        debit: "0.00",
-        credit: amountNum.toFixed(2),
-        lineNo: 2,
-      },
-    ]);
-
-    await logAuditEvent({
-      ...ctx,
-      action: "payroll_recorded",
-      entityType: "journal_entry",
-      entityId: entry.id,
-      metadata: {
-        payPeriod,
-        payDate,
-        totalAmount: amountNum,
-      },
+    // Use the posting service to create journal entry
+    const result = await createSimpleLedgerEntry({
+      tenantId,
+      actorId,
+      postingDate: payDate,
+      memo: notes || `Payroll for ${payPeriod}`,
+      source: "payroll",
+      lines: [
+        {
+          accountId: payrollAccount[0].id,
+          debit: amountNum,
+          credit: 0,
+          description: `Payroll expense for ${payPeriod}`,
+        },
+        {
+          accountId: cashAccount[0].id,
+          debit: 0,
+          credit: amountNum,
+          description: `Payroll payment for ${payPeriod}`,
+        },
+      ],
     });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
 
     return NextResponse.json({
       success: true,
-      journalEntryId: entry.id,
+      journalEntryId: result.journalEntryId,
       payroll: {
         payPeriod,
         payDate,

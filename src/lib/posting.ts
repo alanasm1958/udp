@@ -42,6 +42,7 @@ import {
 } from "@/db/schema";
 import { eq, and, sql, asc } from "drizzle-orm";
 import { logAuditEvent } from "./audit";
+import { checkAndCreatePromotionTask } from "./sales-customers/lead-promotion";
 
 // Types for posting intent structure
 export interface PostingIntentLine {
@@ -1529,6 +1530,11 @@ export async function postSalesDoc(ctx: SalesDocPostingContext): Promise<SalesDo
       },
     });
 
+    // 12. Check for lead promotion task (async, non-blocking)
+    checkAndCreatePromotionTask(tenantId, doc.partyId, actorId).catch((err) => {
+      console.error("Lead promotion check failed:", err);
+    });
+
     return {
       success: true,
       salesDocId,
@@ -2490,6 +2496,149 @@ export async function voidPayment(input: VoidPaymentInput): Promise<VoidPaymentR
       error: `Cannot void payment with status: ${payment.status}`,
     };
   });
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Simple Ledger Entry (for expenses, transfers, capital, payroll, etc.)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export interface SimpleLedgerEntryLine {
+  accountId: string;
+  debit: number;
+  credit: number;
+  description?: string;
+}
+
+export interface SimpleLedgerEntryInput {
+  tenantId: string;
+  actorId: string;
+  postingDate: string;
+  memo: string;
+  source: string; // e.g., "expense", "transfer", "capital", "payroll"
+  lines: SimpleLedgerEntryLine[];
+}
+
+export interface SimpleLedgerEntryResult {
+  success: boolean;
+  journalEntryId?: string;
+  transactionSetId?: string;
+  error?: string;
+}
+
+/**
+ * Create a simple ledger entry for one-off transactions like expenses, transfers, etc.
+ *
+ * This is a simplified posting function that:
+ * 1. Creates a transaction set (posted status)
+ * 2. Creates a journal entry
+ * 3. Creates journal lines
+ *
+ * Use this for simple transactions that don't need the full review workflow.
+ *
+ * THIS FUNCTION WRITES TO LEDGER TABLES (journal_entries, journal_lines).
+ */
+export async function createSimpleLedgerEntry(
+  input: SimpleLedgerEntryInput
+): Promise<SimpleLedgerEntryResult> {
+  const { tenantId, actorId, postingDate, memo, source, lines } = input;
+
+  // Validate lines
+  if (!lines || lines.length === 0) {
+    return {
+      success: false,
+      error: "At least one line is required",
+    };
+  }
+
+  // Calculate totals and validate balance
+  let totalDebit = 0;
+  let totalCredit = 0;
+
+  for (const line of lines) {
+    if (line.debit > 0 && line.credit > 0) {
+      return {
+        success: false,
+        error: "A line cannot have both debit and credit > 0",
+      };
+    }
+    totalDebit += line.debit;
+    totalCredit += line.credit;
+  }
+
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    return {
+      success: false,
+      error: `Entry is not balanced: debits (${totalDebit.toFixed(2)}) ≠ credits (${totalCredit.toFixed(2)})`,
+    };
+  }
+
+  try {
+    // 1. Create transaction set
+    const [txSet] = await db
+      .insert(transactionSets)
+      .values({
+        tenantId,
+        status: "posted",
+        source: `simple_${source}`,
+        createdByActorId: actorId,
+        businessDate: postingDate,
+        notes: memo,
+      })
+      .returning();
+
+    // 2. Create journal entry - THIS IS THE LEDGER WRITE
+    const [journalEntry] = await db
+      .insert(journalEntries)
+      .values({
+        tenantId,
+        postingDate,
+        memo,
+        sourceTransactionSetId: txSet.id,
+        postedByActorId: actorId,
+      })
+      .returning();
+
+    // 3. Create journal lines - THIS IS THE LEDGER WRITE
+    await db.insert(journalLines).values(
+      lines.map((line, index) => ({
+        tenantId,
+        journalEntryId: journalEntry.id,
+        lineNo: index + 1,
+        accountId: line.accountId,
+        debit: line.debit.toFixed(6),
+        credit: line.credit.toFixed(6),
+        description: line.description ?? null,
+      }))
+    );
+
+    // 4. Create audit event
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "journal_entry",
+      entityId: journalEntry.id,
+      action: "journal_entry_created",
+      metadata: {
+        source: `simple_${source}`,
+        transactionSetId: txSet.id,
+        lineCount: lines.length,
+        totalDebit: totalDebit.toFixed(2),
+        totalCredit: totalCredit.toFixed(2),
+      },
+    });
+
+    return {
+      success: true,
+      journalEntryId: journalEntry.id,
+      transactionSetId: txSet.id,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    return {
+      success: false,
+      error: errorMessage,
+    };
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
