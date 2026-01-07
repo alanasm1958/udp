@@ -42,12 +42,18 @@ export type AuditAction =
   | "product_identifier_created"
   | "warehouse_created"
   | "warehouse_updated"
+  | "warehouse_deleted"
   | "storage_location_created"
   // Inventory
   | "inventory_movement_drafted"
   | "inventory_movement_posted"
   | "inventory_movement_reversed"
   | "inventory_balance_updated"
+  | "adjustment_created"
+  | "transfer_created"
+  | "receipt_created"
+  | "return_created"
+  | "ops_payment_created"
   // Strategy - Budgets
   | "budget_created"
   | "budget_updated"
@@ -94,7 +100,77 @@ export type AuditAction =
   | "user_updated"
   | "user_deactivated"
   | "user_activated"
-  | "user_roles_changed";
+  | "user_roles_changed"
+  // Planner
+  | "planner_initiative_created"
+  | "planner_initiative_updated"
+  | "planner_initiative_status_changed"
+  | "planner_alert_dismissed"
+  // Company
+  | "company_legal_profile_updated"
+  | "department_created"
+  | "department_updated"
+  | "user_org_profile_updated"
+  // Categories
+  | "category_created"
+  | "category_updated"
+  // Tasks
+  | "task_created"
+  | "task_updated"
+  // Settings
+  | "settings_updated"
+  | "finance_settings_updated"
+  // AI Cards
+  | "ai_card_created"
+  | "ai_card_updated"
+  // Sales & Customers
+  | "lead_created"
+  | "lead_updated"
+  | "salesperson_created"
+  | "salesperson_updated"
+  // People
+  | "person_created"
+  | "person_updated"
+  | "person_deactivated"
+  | "person_deleted"
+  | "person_linked_to_user"
+  | "time_off_recorded"
+  | "payroll_recorded"
+  | "performance_note_added"
+  // Items
+  | "item_created"
+  | "item_updated"
+  | "item_discontinued"
+  | "initial_stock_created"
+  // Service Jobs
+  | "service_job_created"
+  | "service_job_updated"
+  // AI Tasks
+  | "ai_task_created"
+  | "ai_task_updated"
+  // Settings OAuth
+  | "oauth_credentials_updated"
+  | "oauth_credentials_removed"
+  // Marketing
+  | "marketing_channel_created"
+  | "marketing_channel_updated"
+  | "marketing_plan_created"
+  | "marketing_plan_updated"
+  | "marketing_plan_generated"
+  | "marketing_plan_deleted"
+  | "marketing_campaign_created"
+  | "marketing_campaign_updated"
+  | "marketing_scenario_created"
+  // Marketing - Channel Connections
+  | "oauth_initiated"
+  | "oauth_connected"
+  | "api_key_connected"
+  | "channel_updated"
+  | "channel_disconnected"
+  // Finance - Additional
+  | "expense_recorded"
+  | "transfer_recorded"
+  | "capital_recorded";
 
 export interface AuditEventInput {
   tenantId: string;
