@@ -170,7 +170,53 @@ export type AuditAction =
   // Finance - Additional
   | "expense_recorded"
   | "transfer_recorded"
-  | "capital_recorded";
+  | "capital_recorded"
+  // Payroll
+  | "employee_created"
+  | "employee_updated"
+  | "employee_terminated"
+  | "compensation_created"
+  | "compensation_updated"
+  | "employee_deduction_created"
+  | "employee_deduction_updated"
+  | "employee_deduction_ended"
+  | "payroll_run_created"
+  | "payroll_run_updated"
+  | "payroll_run_deleted"
+  | "payroll_run_calculated"
+  | "payroll_run_approved"
+  | "payroll_run_posted"
+  | "payroll_run_voided"
+  | "payroll_calculated"
+  | "payroll_approved"
+  | "payroll_posted"
+  | "compliance_profile_created"
+  | "compliance_profile_updated"
+  | "tax_registration_created"
+  | "tax_registration_updated"
+  | "tax_filing_created"
+  | "tax_deposit_created"
+  | "tax_deposit_paid"
+  // Performance Management
+  | "performance_cycle_created"
+  | "performance_cycle_updated"
+  | "performance_cycle_deleted"
+  | "performance_review_created"
+  | "performance_review_updated"
+  | "performance_goal_created"
+  | "performance_goal_updated"
+  // HR Documents
+  | "document_verified"
+  | "document_rejected"
+  | "document_expired"
+  // Leave Management
+  | "leave_type_created"
+  | "leave_type_updated"
+  | "leave_request_created"
+  | "leave_request_approved"
+  | "leave_request_rejected"
+  | "leave_request_cancelled"
+  | "leave_balance_adjusted";
 
 export interface AuditEventInput {
   tenantId: string;

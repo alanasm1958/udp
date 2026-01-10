@@ -128,6 +128,24 @@ export const auditEvents = pgTable("audit_events", {
 });
 
 /* Documents (evidence) */
+export const documentCategory = pgEnum("document_category", [
+  "id",           // Government ID, passport, driver's license
+  "contract",     // Employment contract, NDA
+  "certificate",  // Certifications, qualifications
+  "visa",         // Work permits, visas
+  "license",      // Professional licenses
+  "policy",       // Signed policies, handbooks
+  "tax",          // Tax forms, W-4, W-2
+  "other",        // Other documents
+]);
+
+export const documentVerificationStatus = pgEnum("document_verification_status", [
+  "pending",   // Awaiting review
+  "verified",  // Verified by HR
+  "rejected",  // Rejected - needs replacement
+  "expired",   // Past expiry date
+]);
+
 export const documents = pgTable("documents", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
@@ -136,6 +154,15 @@ export const documents = pgTable("documents", {
   mimeType: text("mime_type").notNull(),
   originalFilename: text("original_filename").notNull(),
   uploadedByActorId: uuid("uploaded_by_actor_id").notNull().references(() => actors.id),
+  // HR document extensions
+  expiryDate: date("expiry_date"),
+  expiryAlertDays: integer("expiry_alert_days").default(30),
+  category: documentCategory("document_category"),
+  verificationStatus: documentVerificationStatus("verification_status").default("pending"),
+  verifiedByUserId: uuid("verified_by_user_id").references(() => users.id),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  rejectionReason: text("rejection_reason"),
+  notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -1115,6 +1142,11 @@ export const purchaseDocs = pgTable(
     status: text("status").notNull().default("draft"), // draft, issued, approved, partially_fulfilled, fulfilled, cancelled
     notes: text("notes"),
     metadata: jsonb("metadata"),
+    // Bill payment scheduling fields
+    scheduledPaymentDate: date("scheduled_payment_date"),
+    scheduledPaymentAmount: numeric("scheduled_payment_amount", { precision: 18, scale: 6 }),
+    paymentPriority: text("payment_priority"), // high, medium, low
+    paymentNotes: text("payment_notes"),
     createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1319,6 +1351,852 @@ export const paymentPostingLinks = pgTable(
   (t) => ({
     uniqPayment: uniqueIndex("payment_posting_links_tenant_payment_uniq").on(t.tenantId, t.paymentId),
     idxJournal: index("payment_posting_links_journal_idx").on(t.journalEntryId),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Prepaid Expenses (Layer 11)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const prepaidExpenseStatus = pgEnum("prepaid_expense_status", [
+  "active",
+  "fully_amortized",
+  "cancelled",
+]);
+
+export const amortizationFrequency = pgEnum("amortization_frequency", [
+  "monthly",
+  "quarterly",
+]);
+
+export const amortizationStatus = pgEnum("amortization_status", [
+  "scheduled",
+  "posted",
+  "skipped",
+]);
+
+/**
+ * Prepaid Expenses - Track expenses paid upfront that cover multiple periods
+ * Examples: Annual insurance, prepaid rent, software subscriptions
+ */
+export const prepaidExpenses = pgTable(
+  "prepaid_expenses",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Description
+    description: text("description").notNull(),
+    category: text("category"), // e.g., "Insurance", "Rent", "Software"
+
+    // Vendor (optional)
+    vendorId: uuid("vendor_id").references(() => parties.id),
+    vendorName: text("vendor_name"),
+
+    // Amounts
+    originalAmount: numeric("original_amount", { precision: 18, scale: 6 }).notNull(),
+    remainingAmount: numeric("remaining_amount", { precision: 18, scale: 6 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+
+    // Coverage period
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date").notNull(),
+    amortizationFrequency: amortizationFrequency("amortization_frequency").notNull().default("monthly"),
+
+    // Account mapping
+    prepaidAssetAccountCode: text("prepaid_asset_account_code").notNull().default("1400"), // Prepaid Expenses asset
+    expenseAccountCode: text("expense_account_code").notNull(), // Where amortization goes
+
+    // Source tracking
+    sourceExpenseId: uuid("source_expense_id"), // Links to original expense record if created from expense flow
+    sourcePaymentId: uuid("source_payment_id").references(() => payments.id),
+
+    // Status
+    status: prepaidExpenseStatus("status").notNull().default("active"),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("prepaid_expenses_tenant_idx").on(t.tenantId),
+    idxTenantStatus: index("prepaid_expenses_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantEndDate: index("prepaid_expenses_tenant_end_date_idx").on(t.tenantId, t.endDate),
+  })
+);
+
+/**
+ * Prepaid Amortization Schedule - Individual amortization entries
+ * Each row represents one period's amortization of a prepaid expense
+ */
+export const prepaidAmortizationSchedule = pgTable(
+  "prepaid_amortization_schedule",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    prepaidExpenseId: uuid("prepaid_expense_id").notNull().references(() => prepaidExpenses.id, { onDelete: "cascade" }),
+
+    // Period
+    periodDate: date("period_date").notNull(), // First day of the period
+    periodEndDate: date("period_end_date").notNull(), // Last day of the period
+
+    // Amount
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+
+    // Posting
+    status: amortizationStatus("status").notNull().default("scheduled"),
+    journalEntryId: uuid("journal_entry_id").references(() => journalEntries.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    postedByActorId: uuid("posted_by_actor_id").references(() => actors.id),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPeriod: uniqueIndex("prepaid_amort_schedule_uniq").on(t.tenantId, t.prepaidExpenseId, t.periodDate),
+    idxPrepaidExpense: index("prepaid_amort_schedule_prepaid_idx").on(t.prepaidExpenseId),
+    idxTenantStatus: index("prepaid_amort_schedule_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantPeriod: index("prepaid_amort_schedule_tenant_period_idx").on(t.tenantId, t.periodDate),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Deferred Revenue (Layer 12)
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const deferredRevenueStatus = pgEnum("deferred_revenue_status", [
+  "pending",
+  "partially_recognized",
+  "recognized",
+  "refunded",
+]);
+
+export const recognitionTrigger = pgEnum("recognition_trigger", [
+  "manual",
+  "completion",
+  "schedule",
+]);
+
+/**
+ * Deferred Revenue - Track customer deposits/prepayments that should not be
+ * recognized as revenue until work is completed or service is delivered.
+ * Examples: Customer deposits, prepaid service fees, retainers
+ */
+export const deferredRevenue = pgTable(
+  "deferred_revenue",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Customer
+    customerId: uuid("customer_id").references(() => parties.id),
+    customerName: text("customer_name"),
+
+    // Description
+    description: text("description").notNull(),
+    serviceType: text("service_type"), // e.g., "Consulting", "Project Work", "Retainer"
+
+    // Amounts
+    originalAmount: numeric("original_amount", { precision: 18, scale: 6 }).notNull(),
+    remainingAmount: numeric("remaining_amount", { precision: 18, scale: 6 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+
+    // Timeline
+    receivedDate: date("received_date").notNull(),
+    expectedCompletionDate: date("expected_completion_date"),
+
+    // Account mapping
+    deferredRevenueLiabilityAccountCode: text("deferred_revenue_liability_account_code").notNull().default("2400"), // Deferred Revenue liability
+    revenueAccountCode: text("revenue_account_code").notNull().default("4000"), // Where revenue goes when recognized
+
+    // Source tracking
+    sourcePaymentId: uuid("source_payment_id").references(() => payments.id),
+
+    // Status
+    status: deferredRevenueStatus("status").notNull().default("pending"),
+
+    // Related task for completion tracking
+    completionTaskId: uuid("completion_task_id").references(() => tasks.id),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("deferred_revenue_tenant_idx").on(t.tenantId),
+    idxTenantStatus: index("deferred_revenue_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantCustomer: index("deferred_revenue_tenant_customer_idx").on(t.tenantId, t.customerId),
+    idxTenantCompletion: index("deferred_revenue_tenant_completion_idx").on(t.tenantId, t.expectedCompletionDate),
+  })
+);
+
+/**
+ * Deferred Revenue Recognition - Track when and how deferred revenue is recognized
+ * Each row represents a recognition event (partial or full)
+ */
+export const deferredRevenueRecognition = pgTable(
+  "deferred_revenue_recognition",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    deferredRevenueId: uuid("deferred_revenue_id").notNull().references(() => deferredRevenue.id, { onDelete: "cascade" }),
+
+    // Recognition details
+    recognitionDate: date("recognition_date").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+    trigger: recognitionTrigger("trigger").notNull().default("manual"),
+    notes: text("notes"),
+
+    // Posting
+    journalEntryId: uuid("journal_entry_id").references(() => journalEntries.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    postedByActorId: uuid("posted_by_actor_id").references(() => actors.id),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxDeferredRevenue: index("deferred_rev_recognition_deferred_idx").on(t.deferredRevenueId),
+    idxTenantDate: index("deferred_rev_recognition_tenant_date_idx").on(t.tenantId, t.recognitionDate),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Fixed Assets & Depreciation (Layer 13)
+   Track capital purchases and automatically calculate depreciation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const fixedAssetStatus = pgEnum("fixed_asset_status", [
+  "active",           // Asset is in use, depreciation ongoing
+  "fully_depreciated", // Asset has been fully depreciated
+  "disposed",         // Asset has been sold or disposed of
+]);
+
+export const depreciationMethodEnum = pgEnum("depreciation_method", [
+  "straight_line",     // Equal depreciation each period
+  "none",              // No depreciation (e.g., land)
+]);
+
+export const depreciationEntryStatus = pgEnum("depreciation_entry_status", [
+  "scheduled",  // Pending, not yet posted
+  "posted",     // Journal entry created
+  "skipped",    // Manually skipped
+]);
+
+/**
+ * Fixed Assets - Track capital purchases that depreciate over time
+ * Examples: Equipment, vehicles, machinery, furniture
+ */
+export const fixedAssets = pgTable(
+  "fixed_assets",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Description
+    name: text("name").notNull(),
+    description: text("description"),
+    category: text("category").notNull(), // e.g., "equipment", "vehicle", "furniture", "computer"
+
+    // Purchase details
+    purchaseDate: date("purchase_date").notNull(),
+    purchasePrice: numeric("purchase_price", { precision: 18, scale: 6 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+
+    // Vendor (optional)
+    vendorId: uuid("vendor_id").references(() => parties.id),
+    vendorName: text("vendor_name"),
+
+    // Depreciation configuration
+    depreciationMethod: depreciationMethodEnum("depreciation_method").notNull().default("straight_line"),
+    usefulLifeMonths: integer("useful_life_months").notNull(),
+    salvageValue: numeric("salvage_value", { precision: 18, scale: 6 }).notNull().default("0"),
+
+    // Depreciation tracking
+    totalDepreciation: numeric("total_depreciation", { precision: 18, scale: 6 }).notNull().default("0"),
+    bookValue: numeric("book_value", { precision: 18, scale: 6 }).notNull(), // purchasePrice - totalDepreciation
+
+    // Account mapping
+    assetAccountCode: text("asset_account_code").notNull().default("1500"), // Fixed Assets
+    accumulatedDepreciationAccountCode: text("accumulated_depreciation_account_code").notNull().default("1510"), // Contra-asset
+    depreciationExpenseAccountCode: text("depreciation_expense_account_code").notNull().default("6300"), // Depreciation Expense
+
+    // Source tracking
+    sourceExpenseId: uuid("source_expense_id"), // Links to original expense record if created from expense flow
+    sourceJournalEntryId: uuid("source_journal_entry_id").references(() => journalEntries.id),
+
+    // Status
+    status: fixedAssetStatus("status").notNull().default("active"),
+
+    // Disposal info (if disposed)
+    disposalDate: date("disposal_date"),
+    disposalAmount: numeric("disposal_amount", { precision: 18, scale: 6 }),
+    disposalJournalEntryId: uuid("disposal_journal_entry_id").references(() => journalEntries.id),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("fixed_assets_tenant_idx").on(t.tenantId),
+    idxTenantStatus: index("fixed_assets_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantCategory: index("fixed_assets_tenant_category_idx").on(t.tenantId, t.category),
+  })
+);
+
+/**
+ * Depreciation Schedule - Individual depreciation entries for each period
+ * Each row represents one month's depreciation of a fixed asset
+ */
+export const depreciationSchedule = pgTable(
+  "depreciation_schedule",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    fixedAssetId: uuid("fixed_asset_id").notNull().references(() => fixedAssets.id, { onDelete: "cascade" }),
+
+    // Period
+    periodDate: date("period_date").notNull(), // First day of the month
+    periodEndDate: date("period_end_date").notNull(), // Last day of the month
+
+    // Amount
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+
+    // Posting
+    status: depreciationEntryStatus("status").notNull().default("scheduled"),
+    journalEntryId: uuid("journal_entry_id").references(() => journalEntries.id),
+    postedAt: timestamp("posted_at", { withTimezone: true }),
+    postedByActorId: uuid("posted_by_actor_id").references(() => actors.id),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPeriod: uniqueIndex("depreciation_schedule_uniq").on(t.tenantId, t.fixedAssetId, t.periodDate),
+    idxFixedAsset: index("depreciation_schedule_asset_idx").on(t.fixedAssetId),
+    idxTenantStatus: index("depreciation_schedule_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantPeriod: index("depreciation_schedule_tenant_period_idx").on(t.tenantId, t.periodDate),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Period Closing (Layer 14)
+   Month-end closing workflow with soft/hard close states
+   ───────────────────────────────────────────────────────────────────────────── */
+
+export const periodStatus = pgEnum("period_status", [
+  "open",        // Normal operation, transactions allowed
+  "soft_closed", // Warning shown for new transactions, but allowed
+  "hard_closed", // No new transactions allowed
+]);
+
+/**
+ * Accounting Periods - Track the status of each accounting period (month)
+ * Supports soft close (warning) and hard close (blocked) states
+ */
+export const accountingPeriods = pgTable(
+  "accounting_periods",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Period identification (YYYY-MM format stored as first day of month)
+    periodStart: date("period_start").notNull(), // First day of month
+    periodEnd: date("period_end").notNull(),     // Last day of month
+    periodLabel: text("period_label").notNull(), // e.g., "January 2025"
+
+    // Status
+    status: periodStatus("status").notNull().default("open"),
+
+    // Soft close info
+    softClosedAt: timestamp("soft_closed_at", { withTimezone: true }),
+    softClosedByActorId: uuid("soft_closed_by_actor_id").references(() => actors.id),
+
+    // Hard close info
+    hardClosedAt: timestamp("hard_closed_at", { withTimezone: true }),
+    hardClosedByActorId: uuid("hard_closed_by_actor_id").references(() => actors.id),
+
+    // Reopened info (if period was reopened)
+    reopenedAt: timestamp("reopened_at", { withTimezone: true }),
+    reopenedByActorId: uuid("reopened_by_actor_id").references(() => actors.id),
+    reopenReason: text("reopen_reason"),
+
+    // Pre-close checklist snapshot (stored when soft-closed)
+    checklistSnapshot: jsonb("checklist_snapshot").$type<{
+      unmatchedPayments: number;
+      missingReceipts: number;
+      pendingTasks: number;
+      draftTransactions: number;
+      scheduledDepreciation: number;
+      scheduledAmortization: number;
+    }>(),
+
+    // Period totals snapshot (stored when hard-closed)
+    periodTotals: jsonb("period_totals").$type<{
+      revenue: number;
+      expenses: number;
+      netIncome: number;
+      cashChange: number;
+    }>(),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqPeriod: uniqueIndex("accounting_periods_tenant_period_uniq").on(t.tenantId, t.periodStart),
+    idxTenantStatus: index("accounting_periods_tenant_status_idx").on(t.tenantId, t.status),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Bank Reconciliation (Layer 14c)
+   Match bank statements to recorded transactions
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Status for bank reconciliation sessions
+ */
+export const reconciliationStatus = pgEnum("reconciliation_status", [
+  "in_progress",    // Session is active
+  "completed",      // Reconciliation balanced and completed
+  "abandoned",      // Session was abandoned
+]);
+
+/**
+ * Status for bank statement lines
+ */
+export const statementLineStatus = pgEnum("statement_line_status", [
+  "unmatched",      // Not yet matched to a transaction
+  "matched",        // Matched to a transaction
+  "excluded",       // Excluded from reconciliation (e.g., transfer between own accounts)
+]);
+
+/**
+ * Bank reconciliation sessions - track reconciliation process
+ */
+export const bankReconciliationSessions = pgTable(
+  "bank_reconciliation_sessions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Account being reconciled
+    accountId: uuid("account_id").notNull().references(() => accounts.id),
+    accountCode: text("account_code").notNull(),
+
+    // Statement info
+    statementDate: date("statement_date").notNull(),
+    statementEndingBalance: numeric("statement_ending_balance", { precision: 18, scale: 6 }).notNull(),
+
+    // Book balance at statement date
+    bookBalance: numeric("book_balance", { precision: 18, scale: 6 }).notNull(),
+
+    // Reconciliation status
+    status: reconciliationStatus("status").notNull().default("in_progress"),
+    difference: numeric("difference", { precision: 18, scale: 6 }),
+
+    // Completion info
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    completedByActorId: uuid("completed_by_actor_id").references(() => actors.id),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantAccount: index("bank_rec_sessions_tenant_account_idx").on(t.tenantId, t.accountId),
+    idxTenantDate: index("bank_rec_sessions_tenant_date_idx").on(t.tenantId, t.statementDate),
+  })
+);
+
+/**
+ * Bank statement lines - imported from CSV/OFX
+ */
+export const bankStatementLines = pgTable(
+  "bank_statement_lines",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    reconciliationSessionId: uuid("reconciliation_session_id").notNull().references(() => bankReconciliationSessions.id),
+
+    // Transaction data from bank
+    transactionDate: date("transaction_date").notNull(),
+    description: text("description").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(), // Positive = deposit, Negative = withdrawal
+    reference: text("reference"), // Check number, transaction ID, etc.
+    transactionType: text("transaction_type"), // DEBIT, CREDIT, CHECK, etc.
+
+    // Matching
+    status: statementLineStatus("status").notNull().default("unmatched"),
+    matchedPaymentId: uuid("matched_payment_id").references(() => payments.id),
+    matchedJournalEntryId: uuid("matched_journal_entry_id").references(() => journalEntries.id),
+    matchConfidence: numeric("match_confidence", { precision: 5, scale: 2 }), // 0-100 confidence score
+    matchedByActorId: uuid("matched_by_actor_id").references(() => actors.id),
+    matchedAt: timestamp("matched_at", { withTimezone: true }),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxSession: index("bank_statement_lines_session_idx").on(t.reconciliationSessionId),
+    idxTenantDate: index("bank_statement_lines_tenant_date_idx").on(t.tenantId, t.transactionDate),
+    idxStatus: index("bank_statement_lines_status_idx").on(t.reconciliationSessionId, t.status),
+  })
+);
+
+/**
+ * Transaction reconciliation status - track which transactions are reconciled
+ */
+export const transactionReconciliation = pgTable(
+  "transaction_reconciliation",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Link to transaction (either payment or journal entry)
+    paymentId: uuid("payment_id").references(() => payments.id),
+    journalEntryId: uuid("journal_entry_id").references(() => journalEntries.id),
+
+    // Reconciliation info
+    reconciliationSessionId: uuid("reconciliation_session_id").notNull().references(() => bankReconciliationSessions.id),
+    bankStatementLineId: uuid("bank_statement_line_id").references(() => bankStatementLines.id),
+    reconciledAt: timestamp("reconciled_at", { withTimezone: true }).notNull().defaultNow(),
+    reconciledByActorId: uuid("reconciled_by_actor_id").notNull().references(() => actors.id),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxPayment: index("transaction_rec_payment_idx").on(t.paymentId),
+    idxJournalEntry: index("transaction_rec_journal_entry_idx").on(t.journalEntryId),
+    idxSession: index("transaction_rec_session_idx").on(t.reconciliationSessionId),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Expense Accruals (Layer 14b)
+   Cross-period expense tracking for accrual accounting
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Status for expense accruals
+ */
+export const expenseAccrualStatus = pgEnum("expense_accrual_status", [
+  "accrued",         // Expense recorded, awaiting payment
+  "paid",            // Payment has been made
+  "reversed",        // Accrual was reversed/cancelled
+]);
+
+/**
+ * Expense accruals - track expenses that belong to a different period than when paid
+ * Example: Paying January's phone bill in February
+ */
+export const expenseAccruals = pgTable(
+  "expense_accruals",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Expense details
+    description: text("description").notNull(),
+    category: text("category"),
+    vendorId: uuid("vendor_id").references(() => parties.id),
+    vendorName: text("vendor_name"),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+
+    // Period assignment - the key to accrual accounting
+    expensePeriod: date("expense_period").notNull(), // YYYY-MM-01 - when the expense belongs
+    paymentDate: date("payment_date").notNull(),     // When actually paid/will be paid
+
+    // Account references
+    expenseAccountCode: text("expense_account_code").notNull(),
+    cashAccountCode: text("cash_account_code").notNull(),
+
+    // Journal entries
+    accrualJournalEntryId: uuid("accrual_journal_entry_id").references(() => journalEntries.id),
+    paymentJournalEntryId: uuid("payment_journal_entry_id").references(() => journalEntries.id),
+
+    // Status tracking
+    status: expenseAccrualStatus("status").notNull().default("accrued"),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("expense_accruals_tenant_idx").on(t.tenantId),
+    idxTenantPeriod: index("expense_accruals_tenant_period_idx").on(t.tenantId, t.expensePeriod),
+    idxTenantStatus: index("expense_accruals_tenant_status_idx").on(t.tenantId, t.status),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Recurring Transactions (Layer 14c)
+   Automated recurring expense and transfer templates
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Frequency options for recurring transactions
+ */
+export const recurringFrequency = pgEnum("recurring_frequency", [
+  "weekly",
+  "biweekly",
+  "monthly",
+  "quarterly",
+  "yearly",
+]);
+
+/**
+ * Status for recurring transactions
+ */
+export const recurringTransactionStatus = pgEnum("recurring_transaction_status", [
+  "active",
+  "paused",
+  "cancelled",
+  "completed",  // For limited-run recurring (e.g., 12 payments)
+]);
+
+/**
+ * Type of recurring transaction
+ */
+export const recurringTransactionType = pgEnum("recurring_transaction_type", [
+  "expense",
+  "transfer",
+  "payment",
+]);
+
+/**
+ * Recurring transactions - templates for automatic transaction creation
+ * Example: Monthly rent, quarterly insurance, weekly payroll
+ */
+export const recurringTransactions = pgTable(
+  "recurring_transactions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Template info
+    name: text("name").notNull(), // "Monthly Rent", "Office Supplies Subscription"
+    description: text("description"),
+    type: recurringTransactionType("type").notNull(),
+
+    // Frequency settings
+    frequency: recurringFrequency("frequency").notNull(),
+    dayOfMonth: integer("day_of_month"), // For monthly: 1-28 (28 = last day)
+    dayOfWeek: integer("day_of_week"), // For weekly: 0-6 (0 = Sunday)
+    monthOfYear: integer("month_of_year"), // For yearly: 1-12
+
+    // Schedule tracking
+    startDate: date("start_date").notNull(),
+    endDate: date("end_date"), // null = indefinite
+    nextDueDate: date("next_due_date").notNull(),
+    lastProcessedDate: date("last_processed_date"),
+    occurrencesCompleted: integer("occurrences_completed").notNull().default(0),
+    maxOccurrences: integer("max_occurrences"), // null = unlimited
+
+    // Transaction template data
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+
+    // For expenses
+    category: text("category"),
+    expenseAccountCode: text("expense_account_code"),
+    vendorId: uuid("vendor_id").references(() => parties.id),
+    vendorName: text("vendor_name"),
+
+    // For transfers
+    fromAccountCode: text("from_account_code"),
+    toAccountCode: text("to_account_code"),
+
+    // For payments
+    partyId: uuid("party_id").references(() => parties.id),
+    partyName: text("party_name"),
+
+    // Payment method
+    method: paymentMethod("method").notNull().default("bank"),
+
+    // Processing settings
+    autoCreate: boolean("auto_create").notNull().default(true), // Auto-create or create as draft
+    reminderDaysBefore: integer("reminder_days_before").default(3), // Days before to remind
+
+    // Status
+    status: recurringTransactionStatus("status").notNull().default("active"),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    pausedReason: text("paused_reason"),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    cancelledReason: text("cancelled_reason"),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("recurring_transactions_tenant_idx").on(t.tenantId),
+    idxTenantStatus: index("recurring_transactions_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantNextDue: index("recurring_transactions_tenant_next_due_idx").on(t.tenantId, t.nextDueDate),
+    idxTenantType: index("recurring_transactions_tenant_type_idx").on(t.tenantId, t.type),
+  })
+);
+
+/**
+ * Recurring transaction instances - log of each generated transaction
+ */
+export const recurringTransactionInstances = pgTable(
+  "recurring_transaction_instances",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    recurringTransactionId: uuid("recurring_transaction_id").notNull().references(() => recurringTransactions.id),
+
+    // Instance details
+    scheduledDate: date("scheduled_date").notNull(),
+    amount: numeric("amount", { precision: 18, scale: 6 }).notNull(),
+
+    // Generated transaction references
+    expenseJournalEntryId: uuid("expense_journal_entry_id").references(() => journalEntries.id),
+    paymentId: uuid("payment_id").references(() => payments.id),
+
+    // Status
+    status: text("status").notNull().default("pending"), // pending, created, skipped, failed
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    processedAt: timestamp("processed_at", { withTimezone: true }),
+    errorMessage: text("error_message"),
+  },
+  (t) => ({
+    idxRecurring: index("recurring_instances_recurring_idx").on(t.recurringTransactionId),
+    idxTenantScheduled: index("recurring_instances_tenant_scheduled_idx").on(t.tenantId, t.scheduledDate),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Invoice Follow-up (Layer 14d)
+   Automated overdue invoice tracking and escalation
+   ───────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Escalation level for overdue invoices
+ */
+export const followUpEscalationLevel = pgEnum("follow_up_escalation_level", [
+  "reminder",      // 1 day overdue - friendly reminder
+  "first_notice",  // 7 days overdue - first formal notice
+  "second_notice", // 14 days overdue - second notice, more urgent
+  "final_notice",  // 30 days overdue - final notice before collections
+  "collections",   // 45+ days overdue - sent to collections
+]);
+
+/**
+ * Status of follow-up action
+ */
+export const followUpStatus = pgEnum("follow_up_status", [
+  "pending",     // Action needed
+  "in_progress", // Being worked on
+  "contacted",   // Customer contacted, awaiting response
+  "promised",    // Customer promised payment
+  "completed",   // Resolved (paid or written off)
+  "skipped",     // User chose to skip this follow-up
+]);
+
+/**
+ * Invoice follow-ups - tracks overdue invoice status and escalation
+ */
+export const invoiceFollowUps = pgTable(
+  "invoice_follow_ups",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Invoice reference
+    salesDocId: uuid("sales_doc_id").notNull().references(() => salesDocs.id),
+    partyId: uuid("party_id").notNull().references(() => parties.id),
+
+    // Escalation tracking
+    escalationLevel: followUpEscalationLevel("escalation_level").notNull().default("reminder"),
+    status: followUpStatus("status").notNull().default("pending"),
+
+    // Financial info at time of follow-up creation
+    invoiceAmount: numeric("invoice_amount", { precision: 18, scale: 6 }).notNull(),
+    amountPaid: numeric("amount_paid", { precision: 18, scale: 6 }).notNull().default("0"),
+    amountDue: numeric("amount_due", { precision: 18, scale: 6 }).notNull(),
+    daysOverdue: integer("days_overdue").notNull(),
+
+    // Due dates
+    originalDueDate: date("original_due_date").notNull(),
+    nextEscalationDate: date("next_escalation_date"),
+
+    // Contact tracking
+    lastContactedAt: timestamp("last_contacted_at", { withTimezone: true }),
+    lastContactMethod: text("last_contact_method"), // email, phone, letter
+    contactAttempts: integer("contact_attempts").notNull().default(0),
+
+    // Promise tracking
+    promisedPaymentDate: date("promised_payment_date"),
+    promisedAmount: numeric("promised_amount", { precision: 18, scale: 6 }),
+
+    // Notes
+    notes: text("notes"),
+
+    // Resolution
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedByActorId: uuid("resolved_by_actor_id").references(() => actors.id),
+    resolutionReason: text("resolution_reason"), // paid, partial_payment, write_off, disputed
+
+    // Task reference
+    taskId: uuid("task_id").references(() => tasks.id),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("invoice_follow_ups_tenant_idx").on(t.tenantId),
+    idxTenantStatus: index("invoice_follow_ups_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantEscalation: index("invoice_follow_ups_tenant_escalation_idx").on(t.tenantId, t.escalationLevel),
+    idxSalesDoc: index("invoice_follow_ups_sales_doc_idx").on(t.salesDocId),
+    uniqSalesDoc: uniqueIndex("invoice_follow_ups_sales_doc_uniq").on(t.salesDocId),
+  })
+);
+
+/**
+ * Follow-up activity log - tracks all actions taken
+ */
+export const invoiceFollowUpActivities = pgTable(
+  "invoice_follow_up_activities",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    followUpId: uuid("follow_up_id").notNull().references(() => invoiceFollowUps.id),
+
+    // Activity details
+    activityType: text("activity_type").notNull(), // email_sent, phone_call, letter_sent, payment_promised, payment_received, escalated, note_added
+    description: text("description").notNull(),
+
+    // Contact details
+    contactMethod: text("contact_method"), // email, phone, letter, in_person
+    contactPerson: text("contact_person"),
+    contactDetails: text("contact_details"), // phone number or email used
+
+    // Outcome
+    outcome: text("outcome"), // no_answer, left_message, spoke_with_customer, email_bounced, promised_payment
+
+    // Payment promise
+    promisedDate: date("promised_date"),
+    promisedAmount: numeric("promised_amount", { precision: 18, scale: 6 }),
+
+    // Audit
+    performedByActorId: uuid("performed_by_actor_id").references(() => actors.id), // nullable for system-generated activities
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxFollowUp: index("follow_up_activities_follow_up_idx").on(t.followUpId),
+    idxTenantCreated: index("follow_up_activities_tenant_created_idx").on(t.tenantId, t.createdAt),
   })
 );
 
@@ -2812,17 +3690,21 @@ export const serviceJobEvents = pgTable(
    ============================================================================ */
 
 export const aiTaskType = pgEnum("ai_task_type", [
-  "link_person_to_user",       // Overlap detected between Person and User
-  "merge_duplicate_people",    // Duplicate people records detected
-  "complete_quick_add",        // Quick-add record needs completion
-  "assign_item_to_warehouse",  // Item needs initial warehouse assignment
-  "approve_purchase_variance", // Price variance exceeds threshold
-  "low_stock_reorder",         // Suggest reorder for low stock
-  "service_job_unassigned",    // Service job needs assignment
-  "service_job_overdue",       // Service job past acknowledgement window
-  "supplier_delay_impact",     // Supplier delay impacts sales/service jobs
-  "review_substitution",       // Supplier substitution needs confirmation
-  "landed_cost_allocation",    // Landed costs need allocation
+  "link_person_to_user",           // Overlap detected between Person and User
+  "merge_duplicate_people",        // Duplicate people records detected
+  "complete_quick_add",            // Quick-add record needs completion
+  "assign_item_to_warehouse",      // Item needs initial warehouse assignment
+  "approve_purchase_variance",     // Price variance exceeds threshold
+  "low_stock_reorder",             // Suggest reorder for low stock
+  "service_job_unassigned",        // Service job needs assignment
+  "service_job_overdue",           // Service job past acknowledgement window
+  "supplier_delay_impact",         // Supplier delay impacts sales/service jobs
+  "review_substitution",           // Supplier substitution needs confirmation
+  "landed_cost_allocation",        // Landed costs need allocation
+  "complete_performance_review",   // Performance review needs completion
+  "document_expiry_alert",         // Document expiring soon
+  "verify_document",               // Document needs verification
+  "approve_leave_request",         // Leave request pending approval
 ]);
 
 export const aiTaskStatus = pgEnum("ai_task_status", [
@@ -3217,3 +4099,1255 @@ export const opsPayments = pgTable(
  * Operations Payment Attachments - link documents to ops payments
  * Uses existing documents table via document_links
  */
+
+/* =============================================================================
+   PAYROLL & COMPLIANCE SYSTEM
+   ============================================================================= */
+
+/* Enums for Payroll */
+export const jurisdictionType = pgEnum("jurisdiction_type", ["country", "state", "province", "territory", "local"]);
+export const employmentStatus = pgEnum("employment_status", ["active", "on_leave", "suspended", "terminated", "retired"]);
+export const employmentType = pgEnum("employment_type", ["full_time", "part_time", "contractor", "temp", "intern"]);
+export const flsaStatus = pgEnum("flsa_status", ["exempt", "non_exempt"]);
+export const payType = pgEnum("pay_type", ["salary", "hourly", "commission"]);
+export const payFrequency = pgEnum("pay_frequency", ["weekly", "biweekly", "semimonthly", "monthly"]);
+export const compensationChangeReason = pgEnum("compensation_change_reason", ["hire", "promotion", "annual_review", "adjustment", "demotion", "transfer"]);
+export const deductionCalcMethod = pgEnum("deduction_calc_method", ["fixed", "percent_gross", "percent_net"]);
+export const payrollRunStatus = pgEnum("payroll_run_status", ["draft", "calculating", "calculated", "reviewing", "approved", "posting", "posted", "paid", "void"]);
+export const payrollRunType = pgEnum("payroll_run_type", ["regular", "bonus", "correction", "final"]);
+export const taxCalcMethod = pgEnum("tax_calc_method", ["bracket", "flat_rate", "wage_base", "formula"]);
+export const filingFrequency = pgEnum("filing_frequency", ["monthly", "quarterly", "annual"]);
+export const taxFilingStatus = pgEnum("tax_filing_status", ["pending", "in_progress", "submitted", "accepted", "rejected", "amended"]);
+export const taxDepositStatus = pgEnum("tax_deposit_status", ["pending", "submitted", "confirmed", "rejected"]);
+export const bankAccountTypeEnum = pgEnum("bank_account_type", ["checking", "savings"]);
+export const depositType = pgEnum("deposit_type", ["percent", "fixed", "remainder"]);
+export const taxRegistrationStatus = pgEnum("tax_registration_status", ["pending", "active", "suspended", "closed"]);
+
+/* Jurisdictions (countries, states, localities) */
+export const jurisdictions = pgTable("jurisdictions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  countryCode: text("country_code").notNull(),
+  subdivisionCode: text("subdivision_code"),
+  jurisdictionType: jurisdictionType("jurisdiction_type").notNull(),
+  parentJurisdictionId: uuid("parent_jurisdiction_id").references((): AnyPgColumn => jurisdictions.id),
+  currencyCode: text("currency_code").notNull().default("USD"),
+  timezone: text("timezone"),
+  isActive: boolean("is_active").notNull().default(true),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxCountry: index("idx_jurisdictions_country").on(t.countryCode),
+  idxParent: index("idx_jurisdictions_parent").on(t.parentJurisdictionId),
+}));
+
+/* Compliance rule sets per jurisdiction */
+export const complianceRuleSets = pgTable("compliance_rule_sets", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  jurisdictionId: uuid("jurisdiction_id").notNull().references(() => jurisdictions.id),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo: date("effective_to"),
+  version: text("version").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  minPayFrequency: payFrequency("min_pay_frequency"),
+  maxDaysToPay: integer("max_days_to_pay"),
+  overtimeThresholdDaily: numeric("overtime_threshold_daily", { precision: 4, scale: 2 }),
+  overtimeThresholdWeekly: numeric("overtime_threshold_weekly", { precision: 5, scale: 2 }),
+  overtimeMultiplier: numeric("overtime_multiplier", { precision: 3, scale: 2 }).default("1.50"),
+  doubleTimeThreshold: numeric("double_time_threshold", { precision: 4, scale: 2 }),
+  doubleTimeMultiplier: numeric("double_time_multiplier", { precision: 3, scale: 2 }).default("2.00"),
+  minimumWageHourly: numeric("minimum_wage_hourly", { precision: 10, scale: 4 }),
+  minimumWageSalaryAnnual: numeric("minimum_wage_salary_annual", { precision: 12, scale: 2 }),
+  minimumWageExemptThreshold: numeric("minimum_wage_exempt_threshold", { precision: 12, scale: 2 }),
+  minAnnualLeaveDays: integer("min_annual_leave_days"),
+  minSickLeaveDays: integer("min_sick_leave_days"),
+  parentalLeaveWeeks: integer("parental_leave_weeks"),
+  recordRetentionYears: integer("record_retention_years").default(7),
+  filingFrequency: filingFrequency("filing_frequency"),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxJurisdiction: index("idx_compliance_rules_jurisdiction").on(t.jurisdictionId),
+  uniqJurisdictionEffective: uniqueIndex("compliance_rule_sets_jurisdiction_effective_uniq").on(t.jurisdictionId, t.effectiveFrom),
+}));
+
+/* Tax tables (federal, state, local taxes) */
+export const taxTables = pgTable("tax_tables", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  jurisdictionId: uuid("jurisdiction_id").notNull().references(() => jurisdictions.id),
+  taxType: text("tax_type").notNull(),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo: date("effective_to"),
+  version: text("version").notNull(),
+  name: text("name").notNull(),
+  calculationMethod: taxCalcMethod("calculation_method").notNull(),
+  flatRate: numeric("flat_rate", { precision: 8, scale: 6 }),
+  wageBaseLimit: numeric("wage_base_limit", { precision: 12, scale: 2 }),
+  employerRate: numeric("employer_rate", { precision: 8, scale: 6 }),
+  employerWageBase: numeric("employer_wage_base", { precision: 12, scale: 2 }),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxJurisdiction: index("idx_tax_tables_jurisdiction").on(t.jurisdictionId),
+  idxType: index("idx_tax_tables_type").on(t.taxType),
+  uniqJurisdictionTypeEffective: uniqueIndex("tax_tables_jurisdiction_type_effective_uniq").on(t.jurisdictionId, t.taxType, t.effectiveFrom),
+}));
+
+/* Tax brackets for progressive taxes */
+export const taxBrackets = pgTable("tax_brackets", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  taxTableId: uuid("tax_table_id").notNull().references(() => taxTables.id, { onDelete: "cascade" }),
+  filingStatus: text("filing_status").notNull(),
+  bracketOrder: integer("bracket_order").notNull(),
+  minAmount: numeric("min_amount", { precision: 12, scale: 2 }).notNull(),
+  maxAmount: numeric("max_amount", { precision: 12, scale: 2 }),
+  rate: numeric("rate", { precision: 8, scale: 6 }).notNull(),
+  baseTax: numeric("base_tax", { precision: 12, scale: 2 }).notNull().default("0"),
+}, (t) => ({
+  idxTaxTable: index("idx_tax_brackets_table").on(t.taxTableId),
+  uniqBracket: uniqueIndex("tax_brackets_table_status_order_uniq").on(t.taxTableId, t.filingStatus, t.bracketOrder),
+}));
+
+/* Standard deduction types */
+export const deductionTypes = pgTable("deduction_types", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  jurisdictionId: uuid("jurisdiction_id").references(() => jurisdictions.id),
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  isPretaxFederal: boolean("is_pretax_federal").default(false),
+  isPretaxState: boolean("is_pretax_state").default(false),
+  isPretaxFica: boolean("is_pretax_fica").default(false),
+  annualLimitEmployee: numeric("annual_limit_employee", { precision: 12, scale: 2 }),
+  annualLimitEmployer: numeric("annual_limit_employer", { precision: 12, scale: 2 }),
+  catchUpAge: integer("catch_up_age"),
+  catchUpLimit: numeric("catch_up_limit", { precision: 12, scale: 2 }),
+  defaultCalcMethod: deductionCalcMethod("default_calc_method"),
+  isActive: boolean("is_active").notNull().default(true),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxCode: index("idx_deduction_types_code").on(t.code),
+}));
+
+/* Standard earning types */
+export const earningTypes = pgTable("earning_types", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  jurisdictionId: uuid("jurisdiction_id").references(() => jurisdictions.id),
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  category: text("category").notNull(),
+  isTaxableFederal: boolean("is_taxable_federal").default(true),
+  isTaxableState: boolean("is_taxable_state").default(true),
+  isTaxableFica: boolean("is_taxable_fica").default(true),
+  multiplier: numeric("multiplier", { precision: 4, scale: 2 }).default("1.00"),
+  defaultExpenseAccountCode: text("default_expense_account_code"),
+  isActive: boolean("is_active").notNull().default(true),
+  metadata: jsonb("metadata").default({}),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxCode: index("idx_earning_types_code").on(t.code),
+}));
+
+/* Tenant compliance profile (AI-generated during setup) */
+export const tenantComplianceProfiles = pgTable("tenant_compliance_profiles", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id).unique(),
+  legalName: text("legal_name").notNull(),
+  registrationNumber: text("registration_number"),
+  federalTaxId: text("federal_tax_id"),
+  stateTaxId: text("state_tax_id"),
+  localTaxId: text("local_tax_id"),
+  addressLine1: text("address_line1"),
+  addressLine2: text("address_line2"),
+  city: text("city"),
+  stateProvince: text("state_province"),
+  postalCode: text("postal_code"),
+  countryCode: text("country_code").notNull(),
+  primaryJurisdictionId: uuid("primary_jurisdiction_id").notNull().references(() => jurisdictions.id),
+  stateJurisdictionId: uuid("state_jurisdiction_id").references(() => jurisdictions.id),
+  localJurisdictionId: uuid("local_jurisdiction_id").references(() => jurisdictions.id),
+  entityType: text("entity_type"),
+  industryCode: text("industry_code"),
+  employeeCountTier: text("employee_count_tier"),
+  complianceSummary: jsonb("compliance_summary").notNull().default({}),
+  aiGeneratedAt: timestamp("ai_generated_at", { withTimezone: true }),
+  aiModelVersion: text("ai_model_version"),
+  lastReviewedAt: timestamp("last_reviewed_at", { withTimezone: true }),
+  reviewedByActorId: uuid("reviewed_by_actor_id").references(() => actors.id),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_tenant_compliance_tenant").on(t.tenantId),
+}));
+
+/* Tenant tax registrations per jurisdiction */
+export const tenantTaxRegistrations = pgTable("tenant_tax_registrations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  jurisdictionId: uuid("jurisdiction_id").notNull().references(() => jurisdictions.id),
+  taxType: text("tax_type").notNull(),
+  registrationNumber: text("registration_number"),
+  registrationDate: date("registration_date"),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo: date("effective_to"),
+  employerRateOverride: numeric("employer_rate_override", { precision: 8, scale: 6 }),
+  status: taxRegistrationStatus("status").notNull().default("pending"),
+  metadata: jsonb("metadata").default({}),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_tenant_tax_reg_tenant").on(t.tenantId),
+  uniqTenantJurisdictionType: uniqueIndex("tenant_tax_reg_tenant_jurisdiction_type_uniq").on(t.tenantId, t.jurisdictionId, t.taxType),
+}));
+
+/* Tenant deduction configurations */
+export const tenantDeductionConfigs = pgTable("tenant_deduction_configs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  deductionTypeId: uuid("deduction_type_id").notNull().references(() => deductionTypes.id),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  employerMatchRate: numeric("employer_match_rate", { precision: 6, scale: 4 }),
+  employerMatchLimit: numeric("employer_match_limit", { precision: 12, scale: 2 }),
+  liabilityAccountId: uuid("liability_account_id").references(() => accounts.id),
+  expenseAccountId: uuid("expense_account_id").references(() => accounts.id),
+  metadata: jsonb("metadata").default({}),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqTenantDeductionType: uniqueIndex("tenant_deduction_config_tenant_type_uniq").on(t.tenantId, t.deductionTypeId),
+}));
+
+/* Employees (extends people table) */
+export const employees = pgTable("employees", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  personId: uuid("person_id").notNull().references(() => people.id),
+  employeeNumber: text("employee_number").notNull(),
+  hireDate: date("hire_date").notNull(),
+  terminationDate: date("termination_date"),
+  employmentStatus: employmentStatus("employment_status").notNull().default("active"),
+  employmentType: employmentType("employment_type").notNull(),
+  flsaStatus: flsaStatus("flsa_status").notNull().default("non_exempt"),
+  workerCompClass: text("worker_comp_class"),
+  workJurisdictionId: uuid("work_jurisdiction_id").references(() => jurisdictions.id),
+  workLocation: text("work_location"),
+  isRemote: boolean("is_remote").default(false),
+  federalFilingStatus: text("federal_filing_status").default("single"),
+  stateFilingStatus: text("state_filing_status"),
+  federalAllowances: integer("federal_allowances").default(0),
+  stateAllowances: integer("state_allowances").default(0),
+  additionalFederalWithholding: numeric("additional_federal_withholding", { precision: 10, scale: 2 }).default("0"),
+  additionalStateWithholding: numeric("additional_state_withholding", { precision: 10, scale: 2 }).default("0"),
+  isExemptFromFederal: boolean("is_exempt_from_federal").default(false),
+  isExemptFromState: boolean("is_exempt_from_state").default(false),
+  isExemptFromFica: boolean("is_exempt_from_fica").default(false),
+  w4Step2Checkbox: boolean("w4_step2_checkbox").default(false),
+  w4DependentsAmount: numeric("w4_dependents_amount", { precision: 10, scale: 2 }).default("0"),
+  w4OtherIncome: numeric("w4_other_income", { precision: 10, scale: 2 }).default("0"),
+  w4Deductions: numeric("w4_deductions", { precision: 10, scale: 2 }).default("0"),
+  paymentMethod: text("payment_method").default("check"),
+  managerEmployeeId: uuid("manager_employee_id").references((): AnyPgColumn => employees.id),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_employees_tenant").on(t.tenantId),
+  idxPerson: index("idx_employees_person").on(t.personId),
+  idxStatus: index("idx_employees_status").on(t.tenantId, t.employmentStatus),
+  uniqTenantEmployeeNumber: uniqueIndex("employees_tenant_employee_number_uniq").on(t.tenantId, t.employeeNumber),
+  uniqTenantPerson: uniqueIndex("employees_tenant_person_uniq").on(t.tenantId, t.personId),
+}));
+
+/* Employee bank accounts for direct deposit */
+export const employeeBankAccounts = pgTable("employee_bank_accounts", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  accountType: bankAccountTypeEnum("account_type").notNull(),
+  routingNumber: text("routing_number").notNull(),
+  accountNumberEncrypted: text("account_number_encrypted").notNull(),
+  accountNumberLast4: text("account_number_last4").notNull(),
+  bankName: text("bank_name"),
+  depositType: depositType("deposit_type").notNull(),
+  depositAmount: numeric("deposit_amount", { precision: 10, scale: 2 }),
+  priority: integer("priority").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(true),
+  isPrenoteSent: boolean("is_prenote_sent").default(false),
+  prenoteDate: date("prenote_date"),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxEmployee: index("idx_employee_bank_accounts").on(t.employeeId),
+}));
+
+/* Compensation records (effective-dated) */
+export const compensationRecords = pgTable("compensation_records", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo: date("effective_to"),
+  payType: payType("pay_type").notNull(),
+  payRate: numeric("pay_rate", { precision: 12, scale: 4 }).notNull(),
+  payFrequency: payFrequency("pay_frequency").notNull(),
+  commissionRate: numeric("commission_rate", { precision: 6, scale: 4 }),
+  commissionBasis: text("commission_basis"),
+  standardHoursPerWeek: numeric("standard_hours_per_week", { precision: 5, scale: 2 }).default("40.00"),
+  changeReason: compensationChangeReason("change_reason"),
+  changeNotes: text("change_notes"),
+  approvedByActorId: uuid("approved_by_actor_id").references(() => actors.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxEmployee: index("idx_compensation_employee").on(t.employeeId),
+  idxEffective: index("idx_compensation_effective").on(t.effectiveFrom, t.effectiveTo),
+}));
+
+/* Employee deductions */
+export const employeeDeductions = pgTable("employee_deductions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  deductionTypeId: uuid("deduction_type_id").notNull().references(() => deductionTypes.id),
+  effectiveFrom: date("effective_from").notNull(),
+  effectiveTo: date("effective_to"),
+  calcMethod: deductionCalcMethod("calc_method").notNull(),
+  amount: numeric("amount", { precision: 10, scale: 4 }).notNull(),
+  perPeriodLimit: numeric("per_period_limit", { precision: 10, scale: 2 }),
+  annualLimit: numeric("annual_limit", { precision: 12, scale: 2 }),
+  ytdAmount: numeric("ytd_amount", { precision: 12, scale: 2 }).default("0"),
+  caseNumber: text("case_number"),
+  garnishmentType: text("garnishment_type"),
+  garnishmentPriority: integer("garnishment_priority"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxEmployee: index("idx_employee_deductions").on(t.employeeId),
+}));
+
+/* Employee leave balances */
+export const employeeLeaveBalances = pgTable("employee_leave_balances", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  leaveType: text("leave_type").notNull(),
+  accrualRate: numeric("accrual_rate", { precision: 8, scale: 4 }),
+  accrualFrequency: text("accrual_frequency"),
+  accrualCap: numeric("accrual_cap", { precision: 8, scale: 2 }),
+  balanceHours: numeric("balance_hours", { precision: 8, scale: 2 }).notNull().default("0"),
+  usedYtd: numeric("used_ytd", { precision: 8, scale: 2 }).notNull().default("0"),
+  accruedYtd: numeric("accrued_ytd", { precision: 8, scale: 2 }).notNull().default("0"),
+  carryoverLimit: numeric("carryover_limit", { precision: 8, scale: 2 }),
+  carryoverExpiryDate: date("carryover_expiry_date"),
+  asOfDate: date("as_of_date").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqEmployeeLeaveType: uniqueIndex("employee_leave_balances_employee_type_uniq").on(t.tenantId, t.employeeId, t.leaveType),
+}));
+
+/* =============================================================================
+   LEAVE MANAGEMENT
+   ============================================================================= */
+
+export const leaveAccrualType = pgEnum("leave_accrual_type", [
+  "manual",     // Manually adjusted
+  "monthly",    // Accrues monthly
+  "annual",     // Granted annually
+  "per_period", // Accrues per pay period
+]);
+
+export const leaveRequestStatus = pgEnum("leave_request_status", [
+  "pending",    // Awaiting approval
+  "approved",   // Approved by manager
+  "rejected",   // Rejected by manager
+  "cancelled",  // Cancelled by employee
+  "taken",      // Leave completed
+]);
+
+/* Leave Types (vacation, sick, personal, etc.) */
+export const leaveTypes = pgTable("leave_types", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  name: text("name").notNull(),
+  code: text("code").notNull(),
+  description: text("description"),
+  accrualType: leaveAccrualType("accrual_type").notNull().default("manual"),
+  defaultAnnualAllowance: numeric("default_annual_allowance", { precision: 6, scale: 2 }),
+  maxCarryoverDays: numeric("max_carryover_days", { precision: 6, scale: 2 }),
+  requiresApproval: boolean("requires_approval").notNull().default(true),
+  isPaid: boolean("is_paid").notNull().default(true),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqTenantCode: uniqueIndex("leave_types_tenant_code_uniq").on(t.tenantId, t.code),
+  idxActive: index("idx_leave_types_active").on(t.tenantId, t.isActive),
+}));
+
+/* Leave Requests */
+export const leaveRequests = pgTable("leave_requests", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  leaveTypeId: uuid("leave_type_id").notNull().references(() => leaveTypes.id),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  daysRequested: numeric("days_requested", { precision: 5, scale: 2 }).notNull(),
+  halfDayStart: boolean("half_day_start").default(false),
+  halfDayEnd: boolean("half_day_end").default(false),
+  reason: text("reason"),
+  status: leaveRequestStatus("status").notNull().default("pending"),
+  approvedByUserId: uuid("approved_by_user_id").references(() => users.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  rejectionReason: text("rejection_reason"),
+  affectsPayroll: boolean("affects_payroll").default(true),
+  notes: text("notes"),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxEmployee: index("idx_leave_requests_employee").on(t.employeeId),
+  idxStatus: index("idx_leave_requests_status").on(t.tenantId, t.status),
+  idxDates: index("idx_leave_requests_dates").on(t.startDate, t.endDate),
+}));
+
+/* Leave Balance Adjustments (manual adjustments) */
+export const leaveBalanceAdjustments = pgTable("leave_balance_adjustments", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  leaveTypeId: uuid("leave_type_id").notNull().references(() => leaveTypes.id),
+  adjustmentDate: date("adjustment_date").notNull(),
+  daysAdjusted: numeric("days_adjusted", { precision: 6, scale: 2 }).notNull(),
+  reason: text("reason").notNull(),
+  adjustedByActorId: uuid("adjusted_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxEmployee: index("idx_leave_adjustments_employee").on(t.employeeId),
+  idxType: index("idx_leave_adjustments_type").on(t.leaveTypeId),
+}));
+
+/* Pay schedules */
+export const paySchedules = pgTable("pay_schedules", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  name: text("name").notNull(),
+  frequency: payFrequency("frequency").notNull(),
+  anchorDate: date("anchor_date"),
+  firstPayDay: integer("first_pay_day"),
+  secondPayDay: integer("second_pay_day"),
+  payDayOfMonth: integer("pay_day_of_month"),
+  daysBeforePayToProcess: integer("days_before_pay_to_process").default(3),
+  isDefault: boolean("is_default").default(false),
+  isActive: boolean("is_active").notNull().default(true),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  uniqTenantName: uniqueIndex("pay_schedules_tenant_name_uniq").on(t.tenantId, t.name),
+}));
+
+/* Pay periods */
+export const payPeriods = pgTable("pay_periods", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  payScheduleId: uuid("pay_schedule_id").notNull().references(() => paySchedules.id),
+  periodNumber: integer("period_number").notNull(),
+  year: integer("year").notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  payDate: date("pay_date").notNull(),
+  timesheetCutoff: date("timesheet_cutoff"),
+  processingDate: date("processing_date"),
+  status: text("status").notNull().default("upcoming"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxSchedule: index("idx_pay_periods_schedule").on(t.payScheduleId),
+  idxDates: index("idx_pay_periods_dates").on(t.startDate, t.endDate),
+  uniqScheduleYearPeriod: uniqueIndex("pay_periods_schedule_year_period_uniq").on(t.tenantId, t.payScheduleId, t.year, t.periodNumber),
+}));
+
+/* Payroll runs */
+export const payrollRuns = pgTable("payroll_runs", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  payPeriodId: uuid("pay_period_id").notNull().references(() => payPeriods.id),
+  runNumber: integer("run_number").notNull().default(1),
+  runType: payrollRunType("run_type").notNull().default("regular"),
+  status: payrollRunStatus("status").notNull().default("draft"),
+  totalGrossPay: numeric("total_gross_pay", { precision: 14, scale: 2 }),
+  totalEmployeeTaxes: numeric("total_employee_taxes", { precision: 14, scale: 2 }),
+  totalEmployeeDeductions: numeric("total_employee_deductions", { precision: 14, scale: 2 }),
+  totalNetPay: numeric("total_net_pay", { precision: 14, scale: 2 }),
+  totalEmployerTaxes: numeric("total_employer_taxes", { precision: 14, scale: 2 }),
+  totalEmployerContributions: numeric("total_employer_contributions", { precision: 14, scale: 2 }),
+  employeeCount: integer("employee_count"),
+  calculatedAt: timestamp("calculated_at", { withTimezone: true }),
+  calculatedByActorId: uuid("calculated_by_actor_id").references(() => actors.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  approvedByActorId: uuid("approved_by_actor_id").references(() => actors.id),
+  postedAt: timestamp("posted_at", { withTimezone: true }),
+  postedByActorId: uuid("posted_by_actor_id").references(() => actors.id),
+  journalEntryId: uuid("journal_entry_id").references(() => journalEntries.id),
+  voidedAt: timestamp("voided_at", { withTimezone: true }),
+  voidedByActorId: uuid("voided_by_actor_id").references(() => actors.id),
+  voidReason: text("void_reason"),
+  notes: text("notes"),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_payroll_runs_tenant").on(t.tenantId),
+  idxPeriod: index("idx_payroll_runs_period").on(t.payPeriodId),
+  idxStatus: index("idx_payroll_runs_status").on(t.status),
+}));
+
+/* Payroll run employees (individual employee payroll) */
+export const payrollRunEmployees = pgTable("payroll_run_employees", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  payrollRunId: uuid("payroll_run_id").notNull().references(() => payrollRuns.id, { onDelete: "cascade" }),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  payType: payType("pay_type").notNull(),
+  payRate: numeric("pay_rate", { precision: 12, scale: 4 }).notNull(),
+  grossPay: numeric("gross_pay", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalTaxes: numeric("total_taxes", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalDeductions: numeric("total_deductions", { precision: 12, scale: 2 }).notNull().default("0"),
+  netPay: numeric("net_pay", { precision: 12, scale: 2 }).notNull().default("0"),
+  employerTaxes: numeric("employer_taxes", { precision: 12, scale: 2 }).notNull().default("0"),
+  employerContributions: numeric("employer_contributions", { precision: 12, scale: 2 }).notNull().default("0"),
+  totalEmployerCost: numeric("total_employer_cost", { precision: 12, scale: 2 }).notNull().default("0"),
+  ytdGross: numeric("ytd_gross", { precision: 14, scale: 2 }).notNull().default("0"),
+  ytdFederalTax: numeric("ytd_federal_tax", { precision: 14, scale: 2 }).notNull().default("0"),
+  ytdStateTax: numeric("ytd_state_tax", { precision: 14, scale: 2 }).notNull().default("0"),
+  ytdSocialSecurity: numeric("ytd_social_security", { precision: 14, scale: 2 }).notNull().default("0"),
+  ytdMedicare: numeric("ytd_medicare", { precision: 14, scale: 2 }).notNull().default("0"),
+  paymentMethod: text("payment_method"),
+  checkNumber: text("check_number"),
+  checkDate: date("check_date"),
+  status: text("status").notNull().default("pending"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxPayrollRun: index("idx_payroll_run_employees").on(t.payrollRunId),
+  idxEmployee: index("idx_payroll_run_employees_emp").on(t.employeeId),
+  uniqRunEmployee: uniqueIndex("payroll_run_employees_run_emp_uniq").on(t.payrollRunId, t.employeeId),
+}));
+
+/* Payroll earnings (line items) */
+export const payrollEarnings = pgTable("payroll_earnings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  payrollRunEmployeeId: uuid("payroll_run_employee_id").notNull().references(() => payrollRunEmployees.id, { onDelete: "cascade" }),
+  earningTypeId: uuid("earning_type_id").notNull().references(() => earningTypes.id),
+  hours: numeric("hours", { precision: 8, scale: 2 }),
+  rate: numeric("rate", { precision: 12, scale: 4 }),
+  amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+  description: text("description"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxPayrollRunEmployee: index("idx_payroll_earnings").on(t.payrollRunEmployeeId),
+}));
+
+/* Payroll taxes (calculated withholdings) */
+export const payrollTaxes = pgTable("payroll_taxes", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  payrollRunEmployeeId: uuid("payroll_run_employee_id").notNull().references(() => payrollRunEmployees.id, { onDelete: "cascade" }),
+  taxTableId: uuid("tax_table_id").references(() => taxTables.id),
+  jurisdictionId: uuid("jurisdiction_id").references(() => jurisdictions.id),
+  taxType: text("tax_type").notNull(),
+  taxableWages: numeric("taxable_wages", { precision: 12, scale: 2 }).notNull(),
+  taxRate: numeric("tax_rate", { precision: 8, scale: 6 }),
+  employeeAmount: numeric("employee_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  employerAmount: numeric("employer_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  ytdTaxableWages: numeric("ytd_taxable_wages", { precision: 14, scale: 2 }),
+  wageBaseRemaining: numeric("wage_base_remaining", { precision: 14, scale: 2 }),
+  calculationDetails: jsonb("calculation_details"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxPayrollRunEmployee: index("idx_payroll_taxes").on(t.payrollRunEmployeeId),
+}));
+
+/* Payroll deductions (calculated deductions) */
+export const payrollDeductions = pgTable("payroll_deductions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  payrollRunEmployeeId: uuid("payroll_run_employee_id").notNull().references(() => payrollRunEmployees.id, { onDelete: "cascade" }),
+  employeeDeductionId: uuid("employee_deduction_id").references(() => employeeDeductions.id),
+  deductionTypeId: uuid("deduction_type_id").notNull().references(() => deductionTypes.id),
+  employeeAmount: numeric("employee_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  employerAmount: numeric("employer_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  ytdEmployeeAmount: numeric("ytd_employee_amount", { precision: 14, scale: 2 }),
+  ytdEmployerAmount: numeric("ytd_employer_amount", { precision: 14, scale: 2 }),
+  annualLimitRemaining: numeric("annual_limit_remaining", { precision: 14, scale: 2 }),
+  calculationDetails: jsonb("calculation_details"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxPayrollRunEmployee: index("idx_payroll_deductions").on(t.payrollRunEmployeeId),
+}));
+
+/* Payroll GL mappings */
+export const payrollGlMappings = pgTable("payroll_gl_mappings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  mappingType: text("mapping_type").notNull(),
+  departmentId: uuid("department_id").references(() => departments.id),
+  earningTypeId: uuid("earning_type_id").references(() => earningTypes.id),
+  deductionTypeId: uuid("deduction_type_id").references(() => deductionTypes.id),
+  taxType: text("tax_type"),
+  debitAccountId: uuid("debit_account_id").references(() => accounts.id),
+  creditAccountId: uuid("credit_account_id").references(() => accounts.id),
+  priority: integer("priority").default(100),
+  isActive: boolean("is_active").notNull().default(true),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenantType: index("idx_payroll_gl_mappings").on(t.tenantId, t.mappingType),
+}));
+
+/* Tax filing schedules */
+export const taxFilingSchedules = pgTable("tax_filing_schedules", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  jurisdictionId: uuid("jurisdiction_id").notNull().references(() => jurisdictions.id),
+  filingType: text("filing_type").notNull(),
+  frequency: filingFrequency("frequency").notNull(),
+  dueDayOfMonth: integer("due_day_of_month"),
+  dueDaysAfterQuarter: integer("due_days_after_quarter"),
+  dueDateAnnual: date("due_date_annual"),
+  depositFrequency: text("deposit_frequency"),
+  depositThreshold: numeric("deposit_threshold", { precision: 14, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_tax_filing_schedules").on(t.tenantId),
+}));
+
+/* Tax filings (actual submissions) */
+export const taxFilings = pgTable("tax_filings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  filingScheduleId: uuid("filing_schedule_id").references(() => taxFilingSchedules.id),
+  filingType: text("filing_type").notNull(),
+  jurisdictionId: uuid("jurisdiction_id").notNull().references(() => jurisdictions.id),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  dueDate: date("due_date").notNull(),
+  wagesReported: numeric("wages_reported", { precision: 14, scale: 2 }),
+  taxWithheld: numeric("tax_withheld", { precision: 14, scale: 2 }),
+  employerTax: numeric("employer_tax", { precision: 14, scale: 2 }),
+  totalLiability: numeric("total_liability", { precision: 14, scale: 2 }),
+  amountDeposited: numeric("amount_deposited", { precision: 14, scale: 2 }),
+  balanceDue: numeric("balance_due", { precision: 14, scale: 2 }),
+  status: taxFilingStatus("status").notNull().default("pending"),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }),
+  submittedByActorId: uuid("submitted_by_actor_id").references(() => actors.id),
+  confirmationNumber: text("confirmation_number"),
+  formData: jsonb("form_data"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_tax_filings_tenant").on(t.tenantId),
+  idxPeriod: index("idx_tax_filings_period").on(t.periodStart, t.periodEnd),
+  idxDue: index("idx_tax_filings_due").on(t.dueDate),
+}));
+
+/* Tax deposits */
+export const taxDeposits = pgTable("tax_deposits", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  jurisdictionId: uuid("jurisdiction_id").notNull().references(() => jurisdictions.id),
+  taxType: text("tax_type").notNull(),
+  depositDate: date("deposit_date").notNull(),
+  amount: numeric("amount", { precision: 14, scale: 2 }).notNull(),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  paymentMethod: text("payment_method"),
+  confirmationNumber: text("confirmation_number"),
+  payrollRunIds: jsonb("payroll_run_ids").$type<string[]>().default([]),
+  status: taxDepositStatus("status").notNull().default("pending"),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_tax_deposits_tenant").on(t.tenantId),
+  idxDate: index("idx_tax_deposits_date").on(t.depositDate),
+}));
+
+/* ============================================================================
+   GRC CONTROLS
+   Internal controls and policies for governance, risk & compliance
+   ============================================================================ */
+
+export const grcControlCategory = pgEnum("grc_control_category", [
+  "preventive",   // Prevents issues before they occur
+  "detective",    // Detects issues that have occurred
+  "corrective",   // Corrects issues after detection
+  "directive",    // Provides guidance/direction
+]);
+
+export const grcControlStatus = pgEnum("grc_control_status", [
+  "active",       // Control is active and enforced
+  "inactive",     // Control is not currently enforced
+  "draft",        // Control is being developed
+  "under_review", // Control is being reviewed
+  "deprecated",   // Control has been replaced/retired
+]);
+
+export const grcControlTestResult = pgEnum("grc_control_test_result", [
+  "passed",       // Control test passed
+  "failed",       // Control test failed
+  "partial",      // Partial compliance
+  "not_tested",   // Not yet tested
+]);
+
+/**
+ * GRC Controls - Internal controls and policies
+ */
+export const grcControls = pgTable(
+  "grc_controls",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Core fields
+    name: text("name").notNull(),
+    description: text("description"),
+    category: grcControlCategory("category").notNull(),
+    status: grcControlStatus("status").notNull().default("draft"),
+
+    // Ownership
+    ownerId: uuid("owner_id").references(() => users.id),
+    ownerName: text("owner_name"), // Fallback if no user assigned
+
+    // Testing
+    testingFrequency: text("testing_frequency"), // monthly, quarterly, annually
+    lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
+    lastTestResult: grcControlTestResult("last_test_result").default("not_tested"),
+    nextTestDue: date("next_test_due"),
+
+    // Compliance mapping
+    complianceFrameworks: jsonb("compliance_frameworks").$type<string[]>().default([]), // SOC2, ISO27001, etc.
+    linkedRiskIds: jsonb("linked_risk_ids").$type<string[]>().default([]),
+
+    // Effectiveness
+    effectivenessScore: numeric("effectiveness_score", { precision: 5, scale: 2 }), // 0-100
+
+    // Metadata
+    metadata: jsonb("metadata").notNull().default({}),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantStatus: index("grc_controls_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantCategory: index("grc_controls_tenant_category_idx").on(t.tenantId, t.category),
+    idxTenantOwner: index("grc_controls_tenant_owner_idx").on(t.tenantId, t.ownerId),
+    idxTenantNextTest: index("grc_controls_tenant_next_test_idx").on(t.tenantId, t.nextTestDue),
+  })
+);
+
+/**
+ * GRC Control Tests - Testing history for controls
+ */
+export const grcControlTests = pgTable(
+  "grc_control_tests",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    controlId: uuid("control_id").notNull().references(() => grcControls.id),
+
+    // Test details
+    testDate: date("test_date").notNull(),
+    result: grcControlTestResult("result").notNull(),
+    testerId: uuid("tester_id").references(() => users.id),
+    testerName: text("tester_name"),
+
+    // Findings
+    findings: text("findings"),
+    recommendations: text("recommendations"),
+    evidenceLinks: jsonb("evidence_links").$type<string[]>().default([]),
+
+    // Remediation
+    remediationRequired: boolean("remediation_required").default(false),
+    remediationDueDate: date("remediation_due_date"),
+    remediationCompletedAt: timestamp("remediation_completed_at", { withTimezone: true }),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantControl: index("grc_control_tests_tenant_control_idx").on(t.tenantId, t.controlId),
+    idxTenantDate: index("grc_control_tests_tenant_date_idx").on(t.tenantId, t.testDate),
+  })
+);
+
+/* ============================================================================
+   GRC RISKS
+   Risk register for tracking organizational risks
+   ============================================================================ */
+
+export const grcRiskCategory = pgEnum("grc_risk_category", [
+  "operational",  // Day-to-day business operations
+  "financial",    // Financial impacts
+  "compliance",   // Regulatory/legal compliance
+  "strategic",    // Strategic initiatives
+  "reputational", // Brand/reputation
+  "technology",   // IT/cyber risks
+  "fraud",        // Fraud/misappropriation
+]);
+
+export const grcRiskSeverity = pgEnum("grc_risk_severity", [
+  "critical",   // Immediate attention required
+  "high",       // Urgent attention needed
+  "medium",     // Should be addressed soon
+  "low",        // Minor risk
+]);
+
+export const grcRiskStatus = pgEnum("grc_risk_status", [
+  "open",       // Risk is active
+  "mitigating", // Mitigation in progress
+  "monitoring", // Being monitored
+  "closed",     // Risk resolved/accepted
+  "escalated",  // Escalated to management
+]);
+
+/**
+ * GRC Risks - Risk register
+ */
+export const grcRisks = pgTable(
+  "grc_risks",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Core fields
+    title: text("title").notNull(),
+    description: text("description"),
+    category: grcRiskCategory("category").notNull(),
+    severity: grcRiskSeverity("severity").notNull(),
+    status: grcRiskStatus("status").notNull().default("open"),
+
+    // Assessment
+    likelihood: integer("likelihood"), // 1-5 scale
+    impact: integer("impact"), // 1-5 scale
+    riskScore: numeric("risk_score", { precision: 5, scale: 2 }), // likelihood * impact
+
+    // Ownership
+    ownerId: uuid("owner_id").references(() => users.id),
+    ownerName: text("owner_name"),
+
+    // Mitigation
+    mitigationPlan: text("mitigation_plan"),
+    mitigationDueDate: date("mitigation_due_date"),
+    residualRiskLevel: grcRiskSeverity("residual_risk_level"),
+
+    // Linked entities
+    linkedControlIds: jsonb("linked_control_ids").$type<string[]>().default([]),
+    linkedIncidentIds: jsonb("linked_incident_ids").$type<string[]>().default([]),
+
+    // Review
+    lastReviewedAt: timestamp("last_reviewed_at", { withTimezone: true }),
+    nextReviewDate: date("next_review_date"),
+
+    // Metadata
+    metadata: jsonb("metadata").notNull().default({}),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantStatus: index("grc_risks_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantCategory: index("grc_risks_tenant_category_idx").on(t.tenantId, t.category),
+    idxTenantSeverity: index("grc_risks_tenant_severity_idx").on(t.tenantId, t.severity),
+    idxTenantOwner: index("grc_risks_tenant_owner_idx").on(t.tenantId, t.ownerId),
+  })
+);
+
+/* ============================================================================
+   GRC INCIDENTS
+   Incident tracking for security, compliance, and operational events
+   ============================================================================ */
+
+export const grcIncidentCategory = pgEnum("grc_incident_category", [
+  "security",   // Security breach/incident
+  "data",       // Data incident (loss, exposure)
+  "fraud",      // Fraud attempt/discovery
+  "system",     // System failure
+  "physical",   // Physical security
+  "compliance", // Compliance violation
+  "safety",     // Workplace safety
+  "other",      // Other incidents
+]);
+
+export const grcIncidentSeverity = pgEnum("grc_incident_severity", [
+  "critical",   // Major incident - immediate response
+  "high",       // Significant impact - urgent
+  "medium",     // Moderate impact
+  "low",        // Minor incident
+]);
+
+export const grcIncidentStatus = pgEnum("grc_incident_status", [
+  "reported",     // Initial report
+  "investigating",// Under investigation
+  "contained",    // Incident contained
+  "resolved",     // Fully resolved
+  "closed",       // Case closed
+]);
+
+/**
+ * GRC Incidents - Incident tracking
+ */
+export const grcIncidents = pgTable(
+  "grc_incidents",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Core fields
+    title: text("title").notNull(),
+    description: text("description"),
+    category: grcIncidentCategory("category").notNull(),
+    severity: grcIncidentSeverity("severity").notNull(),
+    status: grcIncidentStatus("status").notNull().default("reported"),
+
+    // Timing
+    occurredAt: timestamp("occurred_at", { withTimezone: true }),
+    reportedAt: timestamp("reported_at", { withTimezone: true }).notNull().defaultNow(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+
+    // Reporter and owner
+    reporterId: uuid("reporter_id").references(() => users.id),
+    reporterName: text("reporter_name"),
+    ownerId: uuid("owner_id").references(() => users.id),
+    ownerName: text("owner_name"),
+
+    // Investigation
+    rootCause: text("root_cause"),
+    immediateActions: text("immediate_actions"),
+    correctiveActions: text("corrective_actions"),
+
+    // Impact assessment
+    affectedSystems: jsonb("affected_systems").$type<string[]>().default([]),
+    affectedPeople: integer("affected_people"),
+    financialImpact: numeric("financial_impact", { precision: 12, scale: 2 }),
+
+    // Regulatory
+    regulatoryReportRequired: boolean("regulatory_report_required").default(false),
+    regulatoryReportFiled: boolean("regulatory_report_filed").default(false),
+    regulatoryReportDate: date("regulatory_report_date"),
+
+    // Linked entities
+    linkedRiskIds: jsonb("linked_risk_ids").$type<string[]>().default([]),
+    linkedControlIds: jsonb("linked_control_ids").$type<string[]>().default([]),
+
+    // Evidence
+    evidenceLinks: jsonb("evidence_links").$type<string[]>().default([]),
+
+    // Metadata
+    metadata: jsonb("metadata").notNull().default({}),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantStatus: index("grc_incidents_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantCategory: index("grc_incidents_tenant_category_idx").on(t.tenantId, t.category),
+    idxTenantSeverity: index("grc_incidents_tenant_severity_idx").on(t.tenantId, t.severity),
+    idxTenantReportedAt: index("grc_incidents_tenant_reported_idx").on(t.tenantId, t.reportedAt),
+  })
+);
+
+/* ============================================================================
+   GROWTH PLAYBOOKS
+   Repeatable growth strategies and execution frameworks
+   ============================================================================ */
+
+export const playbookCategory = pgEnum("playbook_category", [
+  "market_expansion",      // Entering new markets
+  "product_launch",        // Launching new products
+  "cost_optimization",     // Reducing costs
+  "digital_transformation",// Digital initiatives
+  "customer_acquisition",  // Growing customer base
+  "revenue_growth",        // Increasing revenue
+  "operational_efficiency",// Improving operations
+  "talent_development",    // Growing team capabilities
+]);
+
+export const playbookDifficulty = pgEnum("playbook_difficulty", [
+  "easy",     // Quick wins, 1-2 weeks
+  "medium",   // Moderate effort, 1-2 months
+  "hard",     // Significant effort, 3-6 months
+  "expert",   // Major transformation, 6+ months
+]);
+
+export const playbookStatus = pgEnum("playbook_status", [
+  "draft",    // Being developed
+  "active",   // Available for use
+  "archived", // No longer in use
+]);
+
+export const playbookInitiationStatus = pgEnum("playbook_initiation_status", [
+  "in_progress", // Currently executing
+  "completed",   // Successfully completed
+  "abandoned",   // Stopped before completion
+  "paused",      // Temporarily paused
+]);
+
+/**
+ * Growth Playbooks - Repeatable growth strategies
+ */
+export const growthPlaybooks = pgTable(
+  "growth_playbooks",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Core fields
+    code: text("code").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    category: playbookCategory("category").notNull(),
+    difficulty: playbookDifficulty("difficulty").notNull().default("medium"),
+    status: playbookStatus("status").notNull().default("draft"),
+
+    // Planning
+    estimatedDurationDays: integer("estimated_duration_days"),
+    expectedOutcome: text("expected_outcome"),
+    targetHorizon: text("target_horizon"), // run, improve, grow
+
+    // Metrics
+    timesLaunched: integer("times_launched").notNull().default(0),
+    timesCompleted: integer("times_completed").notNull().default(0),
+
+    // Metadata
+    tags: jsonb("tags").$type<string[]>().default([]),
+    metadata: jsonb("metadata").notNull().default({}),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCode: uniqueIndex("growth_playbooks_tenant_code_uniq").on(t.tenantId, t.code),
+    idxTenantCategory: index("growth_playbooks_tenant_category_idx").on(t.tenantId, t.category),
+    idxTenantStatus: index("growth_playbooks_tenant_status_idx").on(t.tenantId, t.status),
+  })
+);
+
+/**
+ * Playbook Steps - Sequential steps within a playbook
+ */
+export const playbookSteps = pgTable(
+  "playbook_steps",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    playbookId: uuid("playbook_id").notNull().references(() => growthPlaybooks.id, { onDelete: "cascade" }),
+
+    // Step details
+    sequenceNo: integer("sequence_no").notNull(),
+    title: text("title").notNull(),
+    description: text("description"),
+    estimatedDays: integer("estimated_days"),
+
+    // Action items (array of tasks to complete)
+    actionItems: jsonb("action_items").$type<string[]>().default([]),
+
+    // Resources/links
+    resources: jsonb("resources").$type<{ title: string; url: string }[]>().default([]),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxPlaybookSeq: index("playbook_steps_playbook_seq_idx").on(t.playbookId, t.sequenceNo),
+  })
+);
+
+/**
+ * Playbook Initiations - Track when playbooks are launched
+ */
+export const playbookInitiations = pgTable(
+  "playbook_initiations",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    playbookId: uuid("playbook_id").notNull().references(() => growthPlaybooks.id),
+
+    // Status tracking
+    status: playbookInitiationStatus("status").notNull().default("in_progress"),
+    currentStepNo: integer("current_step_no").notNull().default(1),
+
+    // Timing
+    initiatedAt: timestamp("initiated_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    targetCompletionDate: date("target_completion_date"),
+
+    // Progress notes
+    notes: text("notes"),
+
+    // Link to planner initiative (if created)
+    plannerInitiativeId: uuid("planner_initiative_id"),
+
+    // Audit
+    initiatedByActorId: uuid("initiated_by_actor_id").references(() => actors.id),
+  },
+  (t) => ({
+    idxPlaybookStatus: index("playbook_initiations_playbook_status_idx").on(t.playbookId, t.status),
+    idxTenantStatus: index("playbook_initiations_tenant_status_idx").on(t.tenantId, t.status),
+  })
+);
+
+/* =========================================================================
+   PERFORMANCE MANAGEMENT
+   ========================================================================= */
+
+/* Performance cycle frequency enum */
+export const performanceCycleFrequency = pgEnum("performance_cycle_frequency", [
+  "quarterly",
+  "semi_annual",
+  "annual",
+  "custom",
+]);
+
+/* Performance cycle status enum */
+export const performanceCycleStatus = pgEnum("performance_cycle_status", [
+  "planned",
+  "active",
+  "completed",
+  "cancelled",
+]);
+
+/* Performance review status enum */
+export const performanceReviewStatus = pgEnum("performance_review_status", [
+  "not_started",
+  "in_progress",
+  "submitted",
+  "approved",
+  "cancelled",
+]);
+
+/* Performance goal status enum */
+export const performanceGoalStatus = pgEnum("performance_goal_status", [
+  "not_started",
+  "in_progress",
+  "completed",
+  "deferred",
+  "cancelled",
+]);
+
+/* Performance cycles (quarterly, semi-annual, annual reviews) */
+export const performanceCycles = pgTable("performance_cycles", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  name: text("name").notNull(),
+  frequency: performanceCycleFrequency("frequency").notNull(),
+  periodStart: date("period_start").notNull(),
+  periodEnd: date("period_end").notNull(),
+  dueDate: date("due_date").notNull(),
+  assignedToRole: text("assigned_to_role"), // 'hr', 'manager', 'owner'
+  status: performanceCycleStatus("status").notNull().default("planned"),
+  notes: text("notes"),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxTenant: index("idx_perf_cycles_tenant").on(t.tenantId),
+  idxStatus: index("idx_perf_cycles_status").on(t.tenantId, t.status),
+  idxDates: index("idx_perf_cycles_dates").on(t.tenantId, t.periodStart, t.periodEnd),
+}));
+
+/* Performance reviews (individual review records) */
+export const performanceReviews = pgTable("performance_reviews", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  cycleId: uuid("cycle_id").notNull().references(() => performanceCycles.id, { onDelete: "cascade" }),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  reviewerEmployeeId: uuid("reviewer_employee_id").references(() => employees.id),
+  status: performanceReviewStatus("status").notNull().default("not_started"),
+  overallRating: integer("overall_rating"),
+  strengths: text("strengths"),
+  areasForImprovement: text("areas_for_improvement"),
+  goalsForNextPeriod: text("goals_for_next_period"),
+  managerComments: text("manager_comments"),
+  employeeComments: text("employee_comments"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  approvedByActorId: uuid("approved_by_actor_id").references(() => actors.id),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxCycle: index("idx_perf_reviews_cycle").on(t.cycleId),
+  idxEmployee: index("idx_perf_reviews_employee").on(t.employeeId),
+  idxReviewer: index("idx_perf_reviews_reviewer").on(t.reviewerEmployeeId),
+  idxStatus: index("idx_perf_reviews_status").on(t.tenantId, t.status),
+  uniqCycleEmployee: uniqueIndex("perf_reviews_cycle_employee_uniq").on(t.cycleId, t.employeeId),
+}));
+
+/* Performance review ratings (detailed ratings by category) */
+export const performanceReviewRatings = pgTable("performance_review_ratings", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  reviewId: uuid("review_id").notNull().references(() => performanceReviews.id, { onDelete: "cascade" }),
+  category: text("category").notNull(), // 'job_knowledge', 'quality_of_work', 'communication', 'teamwork', 'initiative', 'attendance', 'custom'
+  categoryLabel: text("category_label").notNull(),
+  rating: integer("rating"),
+  weight: numeric("weight", { precision: 5, scale: 2 }).default("1.0"),
+  comments: text("comments"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxReview: index("idx_perf_ratings_review").on(t.reviewId),
+}));
+
+/* Performance goals */
+export const performanceGoals = pgTable("performance_goals", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+  employeeId: uuid("employee_id").notNull().references(() => employees.id),
+  cycleId: uuid("cycle_id").references(() => performanceCycles.id, { onDelete: "set null" }),
+  title: text("title").notNull(),
+  description: text("description"),
+  targetDate: date("target_date"),
+  status: performanceGoalStatus("status").notNull().default("not_started"),
+  progressPercent: integer("progress_percent").default(0),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idxEmployee: index("idx_perf_goals_employee").on(t.employeeId),
+  idxCycle: index("idx_perf_goals_cycle").on(t.cycleId),
+  idxStatus: index("idx_perf_goals_status").on(t.tenantId, t.status),
+}))
