@@ -163,20 +163,20 @@ export function LeadsTab() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <GlassCard padding="sm">
           <p className="text-xs text-white/50 uppercase">Pipeline Value</p>
-          <p className="text-2xl font-bold text-white">{loading ? <Spinner size="sm" /> : formatCurrency(totalPipelineValue)}</p>
+          <div className="text-2xl font-bold text-white">{loading ? <Spinner size="sm" /> : formatCurrency(totalPipelineValue)}</div>
           <p className="text-xs text-white/40 mt-1">{activeLeads.length} active leads</p>
         </GlassCard>
         <GlassCard padding="sm">
           <p className="text-xs text-white/50 uppercase">New Leads</p>
-          <p className="text-2xl font-bold text-blue-400">{loading ? <Spinner size="sm" /> : leadsByStatus.new?.length || 0}</p>
+          <div className="text-2xl font-bold text-blue-400">{loading ? <Spinner size="sm" /> : leadsByStatus.new?.length || 0}</div>
         </GlassCard>
         <GlassCard padding="sm">
           <p className="text-xs text-white/50 uppercase">Qualified</p>
-          <p className="text-2xl font-bold text-purple-400">{loading ? <Spinner size="sm" /> : leadsByStatus.qualified?.length || 0}</p>
+          <div className="text-2xl font-bold text-purple-400">{loading ? <Spinner size="sm" /> : leadsByStatus.qualified?.length || 0}</div>
         </GlassCard>
         <GlassCard padding="sm">
           <p className="text-xs text-white/50 uppercase">Won Value</p>
-          <p className="text-2xl font-bold text-emerald-400">{loading ? <Spinner size="sm" /> : formatCurrency(wonValue)}</p>
+          <div className="text-2xl font-bold text-emerald-400">{loading ? <Spinner size="sm" /> : formatCurrency(wonValue)}</div>
         </GlassCard>
       </div>
 

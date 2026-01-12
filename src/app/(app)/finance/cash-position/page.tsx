@@ -129,9 +129,9 @@ function CashPositionContent() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-white/50 uppercase tracking-wider">Total Cash</p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <div className="text-2xl font-bold text-white mt-1">
                 {loading ? <Spinner size="sm" /> : formatCurrency(totalBalance)}
-              </p>
+              </div>
             </div>
             <div className="p-3 rounded-xl bg-emerald-500/20">
               <svg className="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -163,9 +163,9 @@ function CashPositionContent() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-white/50 uppercase tracking-wider">Bank Accounts</p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <div className="text-2xl font-bold text-white mt-1">
                 {loading ? <Spinner size="sm" /> : formatCurrency(totalBank)}
-              </p>
+              </div>
             </div>
             <div className="p-3 rounded-xl bg-blue-500/20">
               <svg className="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -180,9 +180,9 @@ function CashPositionContent() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-white/50 uppercase tracking-wider">Petty Cash</p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <div className="text-2xl font-bold text-white mt-1">
                 {loading ? <Spinner size="sm" /> : formatCurrency(totalCash)}
-              </p>
+              </div>
             </div>
             <div className="p-3 rounded-xl bg-amber-500/20">
               <svg className="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -197,9 +197,9 @@ function CashPositionContent() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-white/50 uppercase tracking-wider">4-Week Forecast</p>
-              <p className="text-2xl font-bold text-white mt-1">
+              <div className="text-2xl font-bold text-white mt-1">
                 {loading ? <Spinner size="sm" /> : formatCurrency(forecast[forecast.length - 1]?.closingBalance || 0)}
-              </p>
+              </div>
             </div>
             <div className="p-3 rounded-xl bg-purple-500/20">
               <svg className="w-6 h-6 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
