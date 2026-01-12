@@ -117,6 +117,23 @@ function ProcurementContent() {
     loadParties();
   }, [loadData, loadParties]);
 
+  // Handle create param from URL (Quick Action from Dashboard)
+  React.useEffect(() => {
+    const createParam = searchParams.get("create");
+    if (createParam) {
+      // Pre-set the doc type if specified
+      if (createParam === "invoice" || createParam === "order" || createParam === "rfq") {
+        setFormData((prev) => ({ ...prev, docType: createParam as "invoice" | "order" | "rfq" }));
+      }
+      setCreateOpen(true);
+      // Clear the param from URL without reloading
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("create");
+      const newUrl = params.toString() ? `/procurement?${params.toString()}` : "/procurement";
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [searchParams, router]);
+
   // Update URL (filters auto-reload via useEffect)
   const updateFilter = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());

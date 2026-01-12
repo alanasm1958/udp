@@ -1,8 +1,14 @@
 "use client";
 
 import * as React from "react";
-import { GlassCard, GlassInput, GlassButton, GlassTable, GlassTabs, PageHeader, Spinner } from "@/components/ui/glass";
+import { GlassCard, GlassSelect, GlassInput, GlassButton, GlassTable, GlassTabs, PageHeader, Spinner } from "@/components/ui/glass";
 import { apiGet, formatCurrency, formatDate } from "@/lib/http";
+
+interface Party {
+  id: string;
+  name: string;
+  type: string;
+}
 
 interface OpenDocItem {
   docId: string;
@@ -51,6 +57,23 @@ export default function ARPage() {
   const [statementData, setStatementData] = React.useState<StatementResult | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [customers, setCustomers] = React.useState<Party[]>([]);
+  const [loadingCustomers, setLoadingCustomers] = React.useState(true);
+
+  // Load customers on mount
+  React.useEffect(() => {
+    async function loadCustomers() {
+      try {
+        const result = await apiGet<{ items: Party[] }>("/api/master/parties?type=customer&limit=200");
+        setCustomers(result.items || []);
+      } catch {
+        // Silently fail
+      } finally {
+        setLoadingCustomers(false);
+      }
+    }
+    loadCustomers();
+  }, []);
 
   const loadOpen = React.useCallback(async () => {
     setLoading(true);
@@ -111,11 +134,14 @@ export default function ARPage() {
       <GlassCard padding="sm">
         <div className="flex flex-wrap items-end gap-4">
           <div className="w-64">
-            <GlassInput
-              label="Customer Party ID"
-              placeholder="UUID..."
+            <GlassSelect
+              label="Customer"
               value={partyId}
               onChange={(e) => setPartyId(e.target.value)}
+              options={[
+                { value: "", label: loadingCustomers ? "Loading..." : "All Customers" },
+                ...customers.map((c) => ({ value: c.id, label: c.name })),
+              ]}
             />
           </div>
           {tab === "statement" && (
@@ -138,7 +164,7 @@ export default function ARPage() {
               </div>
             </>
           )}
-          <GlassButton onClick={tab === "open" ? loadOpen : loadStatement} disabled={loading}>
+          <GlassButton onClick={tab === "open" ? loadOpen : loadStatement} disabled={loading || (tab === "statement" && !partyId)}>
             {loading ? <Spinner size="sm" /> : "Search"}
           </GlassButton>
         </div>

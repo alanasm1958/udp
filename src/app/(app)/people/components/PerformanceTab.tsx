@@ -452,7 +452,6 @@ export function PerformanceTab() {
               </GlassBadge>,
             ])}
             emptyMessage="No performance cycles found"
-            onRowClick={handleRowClick}
           />
         )}
       </GlassCard>

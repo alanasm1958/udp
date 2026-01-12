@@ -9,21 +9,22 @@ import { db } from "@/db";
 import { tenantSubscriptions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
-export type PlanCode = "free" | "monthly_30" | "six_month_pack_25" | "promo_free_6m";
+export type PlanCode = "free" | "starter" | "pro" | "OFFER_6M_FREE" | "MONTHLY_30";
 export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance" | "ai";
 
 /**
  * Plan capabilities map
  * - free: dashboard + reports only
- * - monthly_30: full access billed monthly
- * - six_month_pack_25: full access 6-month package
- * - promo_free_6m: promotional full access for 6 months
+ * - starter: + sales, procurement, inventory
+ * - pro: + finance (posting, payments, AR/AP)
+ * - OFFER_6M_FREE, MONTHLY_30: custom plans with full access
  */
 const PLAN_CAPABILITIES: Record<PlanCode, Capability[]> = {
   free: ["reports"],
-  monthly_30: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
-  six_month_pack_25: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
-  promo_free_6m: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
+  starter: ["reports", "sales", "procurement", "inventory", "ai"],
+  pro: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
+  OFFER_6M_FREE: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
+  MONTHLY_30: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
 };
 
 export interface TenantSubscription {

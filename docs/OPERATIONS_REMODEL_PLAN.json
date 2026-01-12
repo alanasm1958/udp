@@ -1,0 +1,949 @@
+{
+  "plan_name": "Operations Remodel: Unified Catalog + One People Directory + Record Activity",
+  "version": "1.0.0",
+  "non_negotiables": [
+    "Remove standalone Items section/page from app navigation",
+    "Operations is the primary hub for products, services, consumables, assets, warehouses, inventory views, and vendors/contractors",
+    "Use one unified Items catalog data model behind the scenes (Item.type drives behavior)",
+    "Use one unified People directory behind the scenes (roles are tags, not separate tables)",
+    "Expose one primary CTA button on Operations: 'Record activity'",
+    "Store actions as separate records behind the scenes (Purchase, Receipt, Payment, InventoryAdjustment, InventoryTransfer, Return, ServiceJob)",
+    "No auto-merge, no auto-link, no auto-adjust inventory. AI can only create tasks/alerts/recommendations",
+    "Any action that creates a financial entry must have at least one attachment, otherwise create a task and mark as PendingEvidence"
+  ],
+  "navigation": {
+    "remove_pages": [
+      "Items"
+    ],
+    "operations_section": {
+      "route": "/operations",
+      "tabs": [
+        {
+          "id": "overview",
+          "label": "Overview",
+          "route": "/operations"
+        },
+        {
+          "id": "catalog",
+          "label": "Catalog",
+          "route": "/operations/catalog"
+        }
+      ]
+    }
+  },
+  "operations_overview_page": {
+    "layout": [
+      {
+        "component": "Header",
+        "elements": [
+          {
+            "type": "PrimaryButton",
+            "label": "Record activity",
+            "helper_text": "Purchases, payments, stock updates, services, adjustments",
+            "on_click": {
+              "open_drawer": "RecordActivityDrawer"
+            }
+          }
+        ]
+      },
+      {
+        "component": "AnalyticsCardsGrid",
+        "requirements": {
+          "purpose": "Operations focused metrics only",
+          "mvp_cards": [
+            "ProductsInStockCount",
+            "LowStockCount",
+            "OutOfStockCount",
+            "ExpiringSoonCount",
+            "PendingReceiptsCount",
+            "ActiveServiceJobsCount",
+            "OverdueServiceJobsCount",
+            "WarehousesCount"
+          ],
+          "rules": [
+            "Analytics cards are sourced from Operations domain data only",
+            "Analytics cards do not require finance module features beyond Payment records"
+          ]
+        }
+      },
+      {
+        "component": "TwoColumnSection",
+        "left": {
+          "component": "OperationsToDos",
+          "requirements": {
+            "task_filter": {
+              "domain": "Operations"
+            },
+            "sorting": [
+              "priority_desc",
+              "deadline_asc",
+              "created_at_desc"
+            ],
+            "shared_with_dashboard": true,
+            "dashboard_behavior": {
+              "shows_all_domains": true,
+              "sorting_same_as_operations": true
+            }
+          }
+        },
+        "right": {
+          "component": "OperationsAlerts",
+          "requirements": {
+            "alert_filter": {
+              "domain": "Operations"
+            },
+            "behavior": [
+              "Alerts are read-only warnings",
+              "Alerts may have CTA that generates tasks or opens a relevant action flow",
+              "Alerts never change data directly"
+            ]
+          }
+        }
+      },
+      {
+        "component": "OperationsEntryCards",
+        "cards": [
+          {
+            "id": "products_services_consumables",
+            "label": "Products, Services, Consumables",
+            "on_click": {
+              "navigate_to": "/operations/catalog",
+              "apply_filters": {
+                "item_types": [
+                  "Product",
+                  "Service",
+                  "Consumable"
+                ]
+              }
+            }
+          },
+          {
+            "id": "assets",
+            "label": "Assets",
+            "on_click": {
+              "navigate_to": "/operations/catalog",
+              "apply_filters": {
+                "item_types": [
+                  "Asset"
+                ]
+              }
+            }
+          },
+          {
+            "id": "inventory",
+            "label": "Inventory",
+            "on_click": {
+              "navigate_to": "/operations/catalog",
+              "apply_filters": {
+                "item_types": [
+                  "Product",
+                  "Consumable"
+                ],
+                "inventory_view": true
+              }
+            }
+          },
+          {
+            "id": "warehouses",
+            "label": "Warehouses",
+            "on_click": {
+              "navigate_to": "/operations/warehouses"
+            }
+          },
+          {
+            "id": "vendors_contractors",
+            "label": "Vendors and Contractors",
+            "on_click": {
+              "navigate_to": "/operations/people",
+              "apply_filters": {
+                "roles_any": [
+                  "Vendor",
+                  "Contractor"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "component": "MasterListPanel",
+        "requirements": {
+          "title": "Master list",
+          "contents": [
+            "ItemsMasterList",
+            "WarehousesMasterList",
+            "PeopleMasterList"
+          ],
+          "rules": [
+            "Master list supports search and filters",
+            "Inline edit is allowed only for safe fields (name, description, status). Editing costs and stock uses actions instead",
+            "Master list must not duplicate separate tables. It is a unified view on top of Items, Warehouses, People"
+          ]
+        }
+      }
+    ]
+  },
+  "operations_catalog_page": {
+    "route": "/operations/catalog",
+    "requirements": {
+      "default_view": "ItemsTable",
+      "filters": {
+        "by_item_type": true,
+        "by_status": true,
+        "by_tags": true,
+        "by_warehouse": true,
+        "inventory_view_toggle": true,
+        "inventory_view_rules": [
+          "Inventory view is only meaningful for Product and Consumable types",
+          "Inventory view shows current stock by warehouse, low stock, out of stock, expiring soon"
+        ]
+      },
+      "table_columns_mvp": [
+        "Name",
+        "Type",
+        "Status",
+        "Warehouse",
+        "StockStatus",
+        "QuantityOnHand",
+        "Unit",
+        "LowStockThreshold",
+        "ExpiryDate",
+        "DefaultCost",
+        "DefaultPrice",
+        "VendorOrProvider",
+        "LastUpdated"
+      ],
+      "actions_from_catalog": [
+        "OpenRecordActivityDrawerPrefilled",
+        "OpenItemDetails",
+        "DeactivateItem",
+        "ReactivateItem"
+      ]
+    }
+  },
+  "data_model": {
+    "entities": {
+      "Item": {
+        "description": "Single unified catalog. Type drives behavior. No separate product/service tables.",
+        "fields": {
+          "id": "uuid",
+          "type": "enum(Product, Service, Consumable, Asset)",
+          "name": "string",
+          "description": "string_optional",
+          "category": "string_optional",
+          "tags": "string_array_optional",
+          "status": "enum(Active, Inactive)",
+          "default_unit": "enum(pcs, kg, g, l, ml, m, hr, unit)_optional",
+          "default_cost": "number_optional",
+          "default_price": "number_optional",
+          "low_stock_threshold_percent": "number_default_20",
+          "low_stock_threshold_override_qty": "number_optional",
+          "expiry_policy": "enum(None, Required, Optional)_default_None",
+          "expiry_date": "date_optional",
+          "batch_or_lot": "string_optional",
+          "hazard_flag": "boolean_default_false",
+          "food_flag": "boolean_default_false",
+          "non_expiring_flag": "boolean_default_false",
+          "warehouse_id_default": "uuid_optional",
+          "vendor_person_id_default": "uuid_optional",
+          "service_provider_person_ids_eligible": "uuid_array_optional",
+          "availability": "enum(Available, Unavailable)_optional",
+          "created_at": "datetime",
+          "updated_at": "datetime"
+        },
+        "type_rules": {
+          "Product": {
+            "inventory_tracked": true,
+            "requires_unit": true,
+            "expiry_behavior": [
+              "If food_flag true then expiry_policy Required",
+              "If hazard_flag true then expiry_policy Required",
+              "If non_expiring_flag true then expiry_policy None"
+            ]
+          },
+          "Consumable": {
+            "inventory_tracked": true,
+            "requires_unit": true
+          },
+          "Service": {
+            "inventory_tracked": false,
+            "requires_unit": false,
+            "availability_required": true,
+            "eligible_providers_optional": true
+          },
+          "Asset": {
+            "inventory_tracked": false,
+            "availability_required": true
+          }
+        }
+      },
+      "Person": {
+        "description": "Single People directory. Roles are tags. Not necessarily users.",
+        "fields": {
+          "id": "uuid",
+          "full_name": "string",
+          "roles": "enum_array(Staff, Contractor, Vendor, ServiceProvider, SalesPerson, PartnerContact)",
+          "phones": "string_array_optional",
+          "emails": "string_array_optional",
+          "whatsapp_number": "string_optional",
+          "preferred_channel": "enum(WhatsApp, Email)_optional",
+          "location": "string_optional",
+          "notes": "string_optional",
+          "consent_to_notify": "boolean_default_true",
+          "linked_user_id": "uuid_optional",
+          "created_at": "datetime",
+          "updated_at": "datetime"
+        }
+      },
+      "Warehouse": {
+        "fields": {
+          "id": "uuid",
+          "name": "string",
+          "location": "string_optional",
+          "notes": "string_optional",
+          "status": "enum(Active, Inactive)",
+          "created_at": "datetime",
+          "updated_at": "datetime"
+        }
+      },
+      "Purchase": {
+        "description": "Procurement intent and details. Does not affect inventory until Receipt is created.",
+        "fields": {
+          "id": "uuid",
+          "vendor_person_id": "uuid_optional",
+          "purchase_date": "date",
+          "currency": "string_optional",
+          "exchange_rate_snapshot": "number_optional",
+          "lines": "PurchaseLine_array",
+          "notes": "string_optional",
+          "status": "enum(Draft, Ordered, PartiallyReceived, FullyReceived, Cancelled)",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "PurchaseLine": {
+        "fields": {
+          "item_id": "uuid_optional",
+          "free_text_name": "string_optional",
+          "quantity_ordered": "number",
+          "unit": "string_optional",
+          "unit_cost": "number_optional",
+          "warehouse_id_expected": "uuid_optional",
+          "requires_item_mapping_task_if_free_text": "boolean_default_false"
+        }
+      },
+      "Receipt": {
+        "description": "Receiving step. Only this increases inventory for Products and Consumables.",
+        "fields": {
+          "id": "uuid",
+          "purchase_id": "uuid_optional",
+          "received_date": "date",
+          "warehouse_id": "uuid_optional",
+          "lines": "ReceiptLine_array",
+          "notes": "string_optional",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "ReceiptLine": {
+        "fields": {
+          "purchase_line_ref": "string_optional",
+          "item_id": "uuid_optional",
+          "quantity_received": "number",
+          "quantity_damaged_or_rejected": "number_default_0",
+          "expiry_date": "date_optional",
+          "batch_or_lot": "string_optional",
+          "substitution_item_id": "uuid_optional",
+          "substitution_requires_confirmation_task": "boolean_default_false"
+        }
+      },
+      "Payment": {
+        "description": "Financial entry. May link to Purchase but does not require it.",
+        "fields": {
+          "id": "uuid",
+          "payee_person_id": "uuid_optional",
+          "linked_purchase_id": "uuid_optional",
+          "payment_date": "date",
+          "amount": "number",
+          "currency": "string_optional",
+          "method": "enum(Cash, Bank)",
+          "bank_account_id": "uuid_optional",
+          "status": "enum(Paid, Unpaid)",
+          "domain": "enum(Operations)",
+          "notes": "string_optional",
+          "evidence_state": "enum(EvidenceOk, PendingEvidence)_default_PendingEvidence",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "Attachment": {
+        "fields": {
+          "id": "uuid",
+          "linked_entity_type": "enum(Payment, Purchase, Receipt, InventoryAdjustment, InventoryTransfer, Return, ServiceJob)",
+          "linked_entity_id": "uuid",
+          "file_type": "enum(Image, PDF, Other)",
+          "file_url": "string",
+          "uploaded_at": "datetime"
+        }
+      },
+      "InventoryAdjustment": {
+        "description": "Stock correction, shrinkage, expiry write-off. Requires reason and audit.",
+        "fields": {
+          "id": "uuid",
+          "item_id": "uuid",
+          "warehouse_id": "uuid_optional",
+          "adjustment_date": "date",
+          "quantity_delta": "number",
+          "reason": "enum(Correction, Shrinkage, Expired, Damaged, Other)",
+          "notes": "string_optional",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "InventoryTransfer": {
+        "description": "Move stock between warehouses.",
+        "fields": {
+          "id": "uuid",
+          "item_id": "uuid",
+          "from_warehouse_id": "uuid",
+          "to_warehouse_id": "uuid",
+          "transfer_date": "date",
+          "quantity": "number",
+          "notes": "string_optional",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "Return": {
+        "description": "Customer return (adds stock) or supplier return (reduces stock).",
+        "fields": {
+          "id": "uuid",
+          "type": "enum(CustomerReturn, SupplierReturn)",
+          "item_id": "uuid",
+          "warehouse_id": "uuid_optional",
+          "return_date": "date",
+          "quantity": "number",
+          "reason": "string_optional",
+          "linked_sale_id": "uuid_optional",
+          "linked_purchase_id": "uuid_optional",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "ServiceJob": {
+        "description": "Created when a Service is sold. Tracks delivery lifecycle and assignment.",
+        "fields": {
+          "id": "uuid",
+          "service_item_id": "uuid",
+          "linked_sale_id": "uuid_optional",
+          "customer_person_id": "uuid_optional",
+          "assigned_provider_person_id": "uuid_optional",
+          "status": "enum(Assigned, Acknowledged, InProgress, Delivered, Completed, Cancelled)",
+          "assigned_at": "datetime_optional",
+          "ack_deadline": "datetime_optional",
+          "notes": "string_optional",
+          "created_by_user_id": "uuid",
+          "created_at": "datetime"
+        }
+      },
+      "Task": {
+        "fields": {
+          "id": "uuid",
+          "domain": "enum(Operations, Sales, Finance, HR, Marketing)",
+          "title": "string",
+          "description": "string_optional",
+          "priority": "enum(Low, Medium, High, Critical)",
+          "deadline": "datetime_optional",
+          "status": "enum(Open, Done, Dismissed)",
+          "assigned_to_user_id": "uuid_optional",
+          "assigned_to_role": "enum(SMEOwner, OperationsUser)_optional",
+          "linked_entity_type": "string_optional",
+          "linked_entity_id": "uuid_optional",
+          "created_at": "datetime"
+        }
+      },
+      "Alert": {
+        "fields": {
+          "id": "uuid",
+          "domain": "enum(Operations)",
+          "type": "string",
+          "message": "string",
+          "severity": "enum(Info, Warning, Critical)",
+          "linked_entity_type": "string_optional",
+          "linked_entity_id": "uuid_optional",
+          "created_at": "datetime"
+        }
+      }
+    }
+  },
+  "record_activity_drawer": {
+    "component": "RightSideDrawer",
+    "button_label": "Record activity",
+    "first_screen": {
+      "title": "What happened?",
+      "options": [
+        {
+          "id": "add_item",
+          "label": "Add item",
+          "suboptions": [
+            "Product",
+            "Service",
+            "Consumable",
+            "Asset"
+          ]
+        },
+        {
+          "id": "record_purchase",
+          "label": "Bought something",
+          "creates_records": [
+            "Purchase"
+          ]
+        },
+        {
+          "id": "receive_items",
+          "label": "Received items",
+          "creates_records": [
+            "Receipt"
+          ]
+        },
+        {
+          "id": "record_payment",
+          "label": "Paid or owe money",
+          "creates_records": [
+            "Payment"
+          ]
+        },
+        {
+          "id": "adjust_inventory",
+          "label": "Corrected, damaged, or wrote off stock",
+          "creates_records": [
+            "InventoryAdjustment"
+          ]
+        },
+        {
+          "id": "move_inventory",
+          "label": "Moved stock between warehouses",
+          "creates_records": [
+            "InventoryTransfer"
+          ]
+        },
+        {
+          "id": "return_items",
+          "label": "Returned items",
+          "creates_records": [
+            "Return"
+          ]
+        }
+      ],
+      "behavior": [
+        "Users can complete multiple steps in one guided flow (purchase then receive then pay) but records are stored separately",
+        "For simple flows, offer toggles: 'Received now' and 'Paid now' inside Record Purchase"
+      ]
+    },
+    "inline_help_text": {
+      "product": "Products are items you sell or use and track in stock.",
+      "service": "Services are work you deliver, like maintenance or repairs.",
+      "consumable": "Consumables are stock items used up over time, like food or stationery.",
+      "asset": "Assets are long-term items like cars, equipment, or buildings."
+    }
+  },
+  "forms": {
+    "add_product_form": {
+      "fields": [
+        "name",
+        "category_selector(food, hazardous, non_expiring)",
+        "dynamic_note_based_on_category",
+        "expiry_date_if_food_or_hazardous",
+        "quantity",
+        "unit_dropdown(simple_set)",
+        "entry_date",
+        "warehouse_picker_or_assign_later",
+        "description",
+        "default_cost",
+        "default_price",
+        "vendor_picker_or_quick_add_person"
+      ],
+      "rules": [
+        "Low stock default threshold is 20 percent, stored at item level with workspace default",
+        "If quantity becomes 0, stock status is OutOfStock",
+        "If quantity > 0, stock status is InStock",
+        "If quantity <= low stock threshold, stock status is LowStock"
+      ]
+    },
+    "add_service_form": {
+      "fields": [
+        "name",
+        "description",
+        "estimated_cost_optional",
+        "estimated_price_optional",
+        "eligible_providers_picker_from_people_optional",
+        "availability_toggle_default_available"
+      ],
+      "rules": [
+        "Do not force linking to a provider",
+        "Providers are People records with roles containing ServiceProvider or Staff or Contractor"
+      ]
+    },
+    "add_consumable_form": {
+      "fields": [
+        "name",
+        "description",
+        "quantity",
+        "unit_dropdown(simple_set)",
+        "default_cost_optional",
+        "default_price_optional",
+        "warehouse_picker_or_assign_later",
+        "vendor_picker_or_quick_add_person"
+      ],
+      "rules": [
+        "Low stock and out of stock rules apply same as Product"
+      ]
+    },
+    "add_asset_form": {
+      "fields": [
+        "name",
+        "description",
+        "purchase_price_optional",
+        "quantity",
+        "vendor_picker_or_quick_add_person",
+        "availability_toggle_default_available"
+      ]
+    },
+    "add_person_quick_form": {
+      "fields": [
+        "full_name",
+        "phone_optional",
+        "email_optional",
+        "whatsapp_optional",
+        "location_optional",
+        "roles_multi_select",
+        "preferred_channel_optional",
+        "consent_to_notify_default_true"
+      ],
+      "rules": [
+        "Person is created even if only name is provided",
+        "If minimal info is provided, create a task to complete missing contact details when needed for notifications"
+      ]
+    },
+    "record_purchase_form": {
+      "fields": [
+        "vendor_picker_or_quick_add_person",
+        "purchase_date",
+        "currency_optional",
+        "exchange_rate_snapshot_optional",
+        "purchase_lines(item_or_free_text, qty, unit, unit_cost, expected_warehouse_or_assign_later)",
+        "notes_optional",
+        "toggle_received_now_optional",
+        "toggle_paid_now_optional"
+      ],
+      "behavior": [
+        "If a line is free-text without an item_id, create a task: 'Map purchase line to an item'",
+        "If received_now is true, immediately open Receive Items step prefilled with purchase lines",
+        "If paid_now is true, immediately open Record Payment step prefilled with payee, amount, and link to purchase"
+      ]
+    },
+    "receive_items_form": {
+      "fields": [
+        "link_to_purchase_optional",
+        "received_date",
+        "warehouse_picker_or_assign_later",
+        "receipt_lines(item, qty_received, qty_damaged_or_rejected, expiry_date_if_required, batch_optional, substitution_optional)",
+        "notes_optional"
+      ],
+      "rules": [
+        "Partial receiving is supported",
+        "Substitution requires a confirmation task before it affects item mapping"
+      ]
+    },
+    "record_payment_form": {
+      "fields": [
+        "payee_picker_or_quick_add_person",
+        "link_to_purchase_optional",
+        "payment_date",
+        "amount",
+        "currency_optional",
+        "status_paid_or_unpaid",
+        "method_cash_or_bank_if_paid",
+        "bank_account_if_bank",
+        "notes_optional",
+        "attachments_required_if_financial_entry"
+      ],
+      "rules": [
+        "If unpaid, create a task: 'Follow up payment' with suggested deadline",
+        "Payment always creates a financial entry",
+        "Payment requires at least one attachment, otherwise mark PendingEvidence and create task"
+      ]
+    },
+    "adjust_inventory_form": {
+      "fields": [
+        "item_picker",
+        "warehouse_picker_optional",
+        "adjustment_date",
+        "quantity_delta",
+        "reason_required",
+        "notes_optional"
+      ],
+      "rules": [
+        "Always create an audit trail entry",
+        "Never allow silent adjustments without reason"
+      ]
+    },
+    "move_inventory_form": {
+      "fields": [
+        "item_picker",
+        "from_warehouse",
+        "to_warehouse",
+        "transfer_date",
+        "quantity",
+        "notes_optional"
+      ]
+    },
+    "return_items_form": {
+      "fields": [
+        "return_type(customer_or_supplier)",
+        "item_picker",
+        "warehouse_picker_optional",
+        "return_date",
+        "quantity",
+        "reason_optional",
+        "link_to_sale_optional",
+        "link_to_purchase_optional"
+      ]
+    }
+  },
+  "financial_entry_policy": {
+    "definition": [
+      "Any Payment record",
+      "Any Purchase record that includes any monetary cost fields (unit_cost or total cost)",
+      "Any Asset acquisition with purchase price recorded",
+      "Any fee or expense recorded via Payment even if not linked to an item"
+    ],
+    "attachment_requirement": {
+      "required_for": [
+        "Payment"
+      ],
+      "recommended_for": [
+        "Purchase",
+        "Receipt",
+        "Asset related records"
+      ],
+      "enforcement": {
+        "if_missing": [
+          "Set evidence_state = PendingEvidence",
+          "Create Task(domain=Operations, priority=High, title='Add attachment for financial entry', linked_entity=Payment)"
+        ],
+        "ai_review_after_save": [
+          "AI checks if attachment is image or PDF. If Other or missing, create task",
+          "AI checks if attachment appears unrelated or unclear. If unclear, create task 'Replace unclear attachment'"
+        ],
+        "never_block_save": true
+      }
+    }
+  },
+  "inventory_status_rules": {
+    "workspace_defaults": {
+      "low_stock_threshold_percent": 20
+    },
+    "per_item_override": {
+      "enabled": true,
+      "fields": [
+        "low_stock_threshold_override_qty"
+      ]
+    },
+    "stock_state_computation": [
+      "If quantity_on_hand == 0 then OutOfStock",
+      "Else if quantity_on_hand <= computed_low_stock_threshold then LowStock",
+      "Else InStock"
+    ],
+    "expiry_rules": [
+      "If Item.food_flag true then expiry_date required on receiving and or on item creation when stock is created",
+      "If Item.hazard_flag true then expiry_date required on receiving and or on item creation when stock is created",
+      "If expiry_date is within configurable window, create an alert and optionally a task"
+    ]
+  },
+  "service_fulfillment_rules": {
+    "service_job_creation": [
+      "When a Service item is sold, create a ServiceJob linked to the sale",
+      "If provider is selected, set assigned_provider_person_id and status Assigned",
+      "If provider not selected, create Task(domain=Operations, priority=High, title='Assign service provider', linked_entity=ServiceJob)"
+    ],
+    "notifications": {
+      "channels": [
+        "WhatsApp",
+        "Email"
+      ],
+      "selection": [
+        "Use provider preferred_channel when available",
+        "Fallback to the other channel if sending fails",
+        "If all fail, create a Critical task for SME owner"
+      ],
+      "rules": [
+        "Only notify if consent_to_notify is true, otherwise create a task to confirm contact permissions",
+        "If provider is a linked User, also create an in-app task"
+      ]
+    },
+    "lifecycle": [
+      "Assigned",
+      "Acknowledged",
+      "InProgress",
+      "Delivered",
+      "Completed"
+    ],
+    "escalation": [
+      "If not acknowledged by ack_deadline, create alert and task to reassign"
+    ]
+  },
+  "people_overlap_detection": {
+    "triggers": [
+      "On Person create or update",
+      "On User create or update",
+      "On import"
+    ],
+    "match_signals": [
+      "Exact email match",
+      "Exact phone match",
+      "Exact WhatsApp match",
+      "Strong name similarity plus shared location or shared contact"
+    ],
+    "actions": [
+      "Create Task(domain=Operations, priority=High, title='Link person to user' or 'Merge duplicate people', requires_confirmation=true)",
+      "Never auto-link or auto-merge"
+    ]
+  },
+  "ai_guardrails": {
+    "allowed": [
+      "Create tasks",
+      "Create alerts",
+      "Suggest mappings and next steps"
+    ],
+    "not_allowed": [
+      "Auto-merge people",
+      "Auto-link people to users",
+      "Auto-adjust inventory",
+      "Auto-reclassify or change financial entries without confirmation"
+    ],
+    "post_save_ai_checks": [
+      "Detect duplicates (People and Items) and create confirmation tasks",
+      "Detect purchase recorded without receiving after X days and create task",
+      "Detect quantity x unit price mismatch and create task",
+      "Detect missing critical fields for notifications and create task",
+      "Detect missing or unclear attachments for financial entries and create task"
+    ]
+  },
+  "tasking_rules": {
+    "domain_relevance": {
+      "Operations_page_shows": [
+        "domain=Operations"
+      ],
+      "dashboard_shows": [
+        "all domains"
+      ]
+    },
+    "assignment_rules": [
+      "If there is an Operations user, assign Operations tasks to that user",
+      "If not, assign to SMEOwner",
+      "If a task is related to a linked User (provider), assign to that user and also notify"
+    ],
+    "sorting": [
+      "priority_desc",
+      "deadline_asc",
+      "created_at_desc"
+    ]
+  },
+  "alerts_mvp": {
+    "types": [
+      "LowStock",
+      "OutOfStock",
+      "ExpiringSoon",
+      "OverdueReceipt",
+      "FailedNotification",
+      "PendingEvidence"
+    ],
+    "severity_mapping": {
+      "LowStock": "Warning",
+      "OutOfStock": "Critical",
+      "ExpiringSoon": "Warning",
+      "OverdueReceipt": "Warning",
+      "FailedNotification": "Critical",
+      "PendingEvidence": "Warning"
+    }
+  },
+  "validation_and_error_proofing": {
+    "general": [
+      "Never lose user input when switching steps in Record activity drawer",
+      "Always support 'Assign later' for warehouse where specified",
+      "Always allow quick-add person and quick-add item placeholders, then generate tasks to clean up"
+    ],
+    "required_fields_by_flow": {
+      "add_product": [
+        "name",
+        "quantity",
+        "unit",
+        "entry_date"
+      ],
+      "add_service": [
+        "name"
+      ],
+      "add_consumable": [
+        "name",
+        "quantity",
+        "unit"
+      ],
+      "add_asset": [
+        "name"
+      ],
+      "record_purchase": [
+        "purchase_date",
+        "at_least_one_line"
+      ],
+      "receive_items": [
+        "received_date",
+        "at_least_one_line"
+      ],
+      "record_payment": [
+        "payment_date",
+        "amount",
+        "status"
+      ],
+      "inventory_adjustment": [
+        "item_id",
+        "adjustment_date",
+        "quantity_delta",
+        "reason"
+      ],
+      "inventory_transfer": [
+        "item_id",
+        "from_warehouse_id",
+        "to_warehouse_id",
+        "transfer_date",
+        "quantity"
+      ],
+      "return_items": [
+        "type",
+        "item_id",
+        "return_date",
+        "quantity"
+      ]
+    },
+    "expiry_enforcement": [
+      "If category is Food or Hazardous, show note and require expiry date at receiving time if stock is created",
+      "If non-expiring, hide expiry date fields"
+    ]
+  },
+  "mvp_deliverables": {
+    "pages": [
+      "Operations Overview",
+      "Operations Catalog",
+      "Warehouses List",
+      "People Directory (within Operations)"
+    ],
+    "core_flows": [
+      "Record activity drawer with all actions",
+      "Add item flows (Product, Service, Consumable, Asset)",
+      "Record purchase, receive items, record payment",
+      "Inventory adjustment, transfer, return",
+      "Attachment enforcement for financial entries",
+      "Tasks and alerts display and sorting"
+    ]
+  }
+}

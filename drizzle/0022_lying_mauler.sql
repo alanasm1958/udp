@@ -1,0 +1,1 @@
+ALTER TABLE "tenant_settings" ADD COLUMN "oauth_credentials" jsonb DEFAULT '{}'::jsonb;

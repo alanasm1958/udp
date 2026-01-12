@@ -243,7 +243,6 @@ export function PayrollTab({ onRecordActivity }: PayrollTabProps) {
                 {statusLabels[run.status] || run.status}
               </GlassBadge>,
             ])}
-            onRowClick={handleRunClick}
             emptyMessage="No payroll runs found"
           />
         )}

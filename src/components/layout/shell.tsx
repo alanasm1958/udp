@@ -5,7 +5,6 @@ import { usePathname, useRouter } from "next/navigation";
 import * as React from "react";
 import { CopilotSidebar } from "@/components/ai/CopilotSidebar";
 import { OmniWindow } from "@/components/ai/OmniWindow";
-import { useTheme } from "@/components/ui/theme-provider";
 
 interface NavItem {
   label: string;
@@ -71,7 +70,7 @@ const navigation: NavItem[] = [
       { label: "Overview", href: "/operations" },
       { label: "Catalog", href: "/operations/catalog" },
       { label: "Warehouses", href: "/operations/warehouses" },
-      { label: "Vendors & Contractors", href: "/people?type=supplier_contact" },
+      { label: "Vendors & Contractors", href: "/operations/people" },
     ],
   },
   // 6. Finance & Cash Management
@@ -85,6 +84,8 @@ const navigation: NavItem[] = [
     ),
     children: [
       { label: "Cash Position", href: "/finance/cash-position" },
+      { label: "Trial Balance", href: "/finance/trial-balance" },
+      { label: "General Ledger", href: "/finance/general-ledger" },
       { label: "Accounts Receivable", href: "/finance/ar" },
       { label: "AR Aging", href: "/finance/ar-aging" },
       { label: "Accounts Payable", href: "/finance/ap" },
@@ -138,29 +139,6 @@ const navigation: NavItem[] = [
 
 const SIDEBAR_OPEN_KEY = "udp-sidebar-open";
 const SIDEBAR_EXPANDED_KEY = "udp-sidebar-expanded";
-
-function ThemeToggleButton() {
-  const { resolvedTheme, setTheme } = useTheme();
-  const isDark = resolvedTheme === "dark";
-
-  return (
-    <button
-      onClick={() => setTheme(isDark ? "light" : "dark")}
-      className="w-full flex items-center gap-2 px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--dropdown-item-hover)] transition-colors"
-    >
-      {isDark ? (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
-        </svg>
-      ) : (
-        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
-        </svg>
-      )}
-      {isDark ? "Light mode" : "Dark mode"}
-    </button>
-  );
-}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -283,10 +261,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const toggleExpanded = React.useCallback((href: string) => {
     setExpandedItems((prev) => {
-      // Accordion behavior: close others when opening a new section
       const newItems = prev.includes(href)
         ? prev.filter((h) => h !== href)
-        : [href];
+        : [...prev, href];
       try {
         localStorage.setItem(SIDEBAR_EXPANDED_KEY, JSON.stringify(newItems));
       } catch {
@@ -339,12 +316,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         `}
       >
         {/* Logo */}
-        <div className="flex items-center gap-3 h-16 px-4 border-b border-[var(--border-default)]">
+        <div className="flex items-center gap-3 h-16 px-4 border-b border-white/8">
           <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center flex-shrink-0">
             <span className="text-white font-bold text-sm">U</span>
           </div>
           {sidebarOpen && (
-            <span className="font-semibold text-[var(--text-primary)] tracking-tight">UDP ERP</span>
+            <span className="font-semibold text-white tracking-tight">UDP ERP</span>
           )}
         </div>
 
@@ -365,10 +342,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         className={`
                           w-full flex items-center gap-3 px-3 py-2.5 rounded-xl
                           text-sm font-medium transition-all duration-150
-                          ${itemActive ? "bg-[var(--surface-active)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"}
+                          ${itemActive ? "bg-white/10 text-white" : "text-white/60 hover:text-white hover:bg-white/5"}
                         `}
                       >
-                        <span className={itemActive ? "text-[var(--text-primary)]" : "text-[var(--text-tertiary)]"}>{item.icon}</span>
+                        <span className={itemActive ? "text-white" : "text-white/50"}>{item.icon}</span>
                         {sidebarOpen && (
                           <>
                             <span className="flex-1 text-left">{item.label}</span>
@@ -394,8 +371,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                                   block px-3 py-2 rounded-lg text-sm
                                   transition-all duration-150
                                   ${pathname === child.href
-                                    ? "text-[var(--text-primary)] bg-[var(--surface-active)]"
-                                    : "text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"
+                                    ? "text-white bg-white/10"
+                                    : "text-white/50 hover:text-white hover:bg-white/5"
                                   }
                                 `}
                               >
@@ -412,10 +389,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       className={`
                         flex items-center gap-3 px-3 py-2.5 rounded-xl
                         text-sm font-medium transition-all duration-150
-                        ${itemActive ? "bg-[var(--surface-active)] text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)]"}
+                        ${itemActive ? "bg-white/10 text-white" : "text-white/60 hover:text-white hover:bg-white/5"}
                       `}
                     >
-                      <span className={itemActive ? "text-[var(--text-primary)]" : "text-[var(--text-tertiary)]"}>{item.icon}</span>
+                      <span className={itemActive ? "text-white" : "text-white/50"}>{item.icon}</span>
                       {sidebarOpen && <span>{item.label}</span>}
                     </Link>
                   )}
@@ -426,10 +403,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         {/* Sidebar toggle */}
-        <div className="p-2 border-t border-[var(--border-default)]">
+        <div className="p-2 border-t border-white/8">
           <button
             onClick={handleSidebarToggle}
-            className="w-full flex items-center justify-center p-2 rounded-xl text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-[var(--surface-hover)] transition-all"
+            className="w-full flex items-center justify-center p-2 rounded-xl text-white/50 hover:text-white hover:bg-white/5 transition-all"
           >
             <svg
               className={`w-5 h-5 transition-transform ${sidebarOpen ? "" : "rotate-180"}`}
@@ -447,29 +424,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Main content area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top header */}
-        <header className="glass-header h-16 flex items-center justify-between px-6 relative z-10">
+        <header className="glass-header h-16 flex items-center justify-between px-6">
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-[var(--text-muted)]">{user?.tenant?.name || "Workspace"}</span>
-            <span className="text-[var(--text-disabled)]">/</span>
-            <span className="text-[var(--text-secondary)] font-medium">{getCurrentSection()}</span>
+            <span className="text-white/40">{user?.tenant?.name || "Workspace"}</span>
+            <span className="text-white/20">/</span>
+            <span className="text-white/70 font-medium">{getCurrentSection()}</span>
           </div>
 
           {/* AI Buttons */}
           <div className="flex items-center gap-2 mr-4">
             <button
               onClick={() => setOmniOpen(true)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-[var(--surface-2)] hover:bg-[var(--surface-3)] rounded-lg transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-white/60 hover:text-white bg-white/5 hover:bg-white/10 rounded-lg transition-colors"
               title="Quick search (⌘K)"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
               </svg>
               <span className="hidden sm:inline">Search</span>
-              <kbd className="hidden sm:inline px-1.5 py-0.5 text-xs bg-[var(--surface-3)] rounded">⌘K</kbd>
+              <kbd className="hidden sm:inline px-1.5 py-0.5 text-xs bg-white/10 rounded">⌘K</kbd>
             </button>
             <button
               onClick={() => setCopilotOpen(true)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] bg-gradient-to-r from-purple-500/20 to-blue-500/20 hover:from-purple-500/30 hover:to-blue-500/30 border border-purple-500/20 rounded-lg transition-colors"
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-white/60 hover:text-white bg-gradient-to-r from-purple-500/20 to-blue-500/20 hover:from-purple-500/30 hover:to-blue-500/30 border border-purple-500/20 rounded-lg transition-colors"
               title="AI Copilot (⌘/)"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -480,14 +457,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
 
           {/* User menu */}
-          <div className="relative z-[var(--z-dropdown)]" ref={userMenuRef}>
+          <div className="relative" ref={userMenuRef}>
             <button
               onClick={() => setUserMenuOpen(!userMenuOpen)}
-              className="flex items-center gap-3 px-2 py-1.5 rounded-xl hover:bg-[var(--surface-hover)] transition-colors"
+              className="flex items-center gap-3 px-2 py-1.5 rounded-xl hover:bg-white/5 transition-colors"
             >
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium text-[var(--text-primary)]">{user?.fullName || "Loading..."}</p>
-                <p className="text-xs text-[var(--text-tertiary)]">{user?.email}</p>
+                <p className="text-sm font-medium text-white/90">{user?.fullName || "Loading..."}</p>
+                <p className="text-xs text-white/50">{user?.email}</p>
               </div>
               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center">
                 <span className="text-white text-sm font-medium">
@@ -496,21 +473,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </div>
             </button>
 
-            {/* Dropdown - Fixed z-index issue */}
+            {/* Dropdown */}
             {userMenuOpen && (
-              <div
-                className="absolute right-0 mt-2 w-56 py-2 rounded-xl animate-scale-up"
-                style={{
-                  background: 'var(--dropdown-bg)',
-                  border: '1px solid var(--dropdown-border)',
-                  boxShadow: 'var(--dropdown-shadow)',
-                  zIndex: 'var(--z-popover)',
-                  backdropFilter: 'blur(20px)',
-                }}
-              >
-                <div className="px-4 py-2 border-b border-[var(--border-default)]">
-                  <p className="text-sm font-medium text-[var(--text-primary)]">{user?.fullName}</p>
-                  <p className="text-xs text-[var(--text-tertiary)]">{user?.email}</p>
+              <div className="absolute right-0 mt-2 w-56 py-2 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl animate-scale-up">
+                <div className="px-4 py-2 border-b border-white/10">
+                  <p className="text-sm font-medium text-white">{user?.fullName}</p>
+                  <p className="text-xs text-white/50">{user?.email}</p>
                   {isAdmin && (
                     <span className="inline-block mt-1 px-2 py-0.5 text-xs bg-blue-500/20 text-blue-400 rounded-md">
                       Admin
@@ -518,12 +486,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   )}
                 </div>
                 <div className="py-1">
-                  <ThemeToggleButton />
                   {isAdmin && (
                     <Link
                       href="/settings"
                       onClick={() => setUserMenuOpen(false)}
-                      className="flex items-center gap-2 px-4 py-2 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--dropdown-item-hover)] transition-colors"
+                      className="flex items-center gap-2 px-4 py-2 text-sm text-white/70 hover:text-white hover:bg-white/5 transition-colors"
                     >
                       <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z" />

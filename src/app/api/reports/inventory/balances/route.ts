@@ -26,7 +26,7 @@ interface InventoryBalanceRow {
 
 /**
  * GET /api/reports/inventory/balances
- * Query params: warehouseId?, productId?, limit?, offset?
+ * Query params: warehouseId?, productId?, limit?, offset?, includeZero?
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
@@ -35,14 +35,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     const warehouseId = searchParams.get("warehouseId");
     const productId = searchParams.get("productId");
+    const includeZero = searchParams.get("includeZero") === "true";
     const limit = parseInt(searchParams.get("limit") || "100", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
 
     // Build conditions
-    const conditions = [
-      eq(inventoryBalances.tenantId, tenantId),
-      gt(inventoryBalances.onHand, "0"),
-    ];
+    const conditions = [eq(inventoryBalances.tenantId, tenantId)];
+
+    if (!includeZero) {
+      conditions.push(gt(inventoryBalances.onHand, "0"));
+    }
 
     if (warehouseId) {
       conditions.push(eq(inventoryBalances.warehouseId, warehouseId));

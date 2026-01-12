@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { GlassCard } from "@/components/ui/glass";
 
@@ -37,7 +37,7 @@ const STATUS_COLORS: Record<string, string> = {
   discontinued: "bg-red-500/20 text-red-300",
 };
 
-function CatalogContent() {
+export default function CatalogPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [items, setItems] = useState<Item[]>([]);
@@ -272,17 +272,5 @@ function CatalogContent() {
         )}
       </GlassCard>
     </div>
-  );
-}
-
-export default function CatalogPage() {
-  return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/50" />
-      </div>
-    }>
-      <CatalogContent />
-    </Suspense>
   );
 }

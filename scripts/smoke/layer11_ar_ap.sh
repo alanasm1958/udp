@@ -8,44 +8,17 @@
 # - Previous layers (1-10) smoke tests should have run to create test data
 #
 
-set -e
+set -euo pipefail
 
-BASE_URL="${BASE_URL:-http://localhost:3000}"
-COOKIE_JAR="${COOKIE_JAR:-/tmp/udp_smoke_cookies.txt}"
+# Source shared auth helper
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/_auth.sh"
 
 echo "=== Layer 11 Smoke Test: AR/AP ==="
 echo ""
 
-echo "=== Auth: Login as admin ==="
-rm -f "$COOKIE_JAR"
-curl -s -X POST "$BASE_URL/api/auth/bootstrap" > /dev/null 2>&1 || true
-LOGIN=$(curl -s -X POST "$BASE_URL/api/auth/login" \
-  -H "Content-Type: application/json" \
-  -c "$COOKIE_JAR" \
-  -d '{"email":"admin@local","password":"admin1234"}')
-if ! echo "$LOGIN" | jq -e '.success' > /dev/null 2>&1; then
-  echo "FAIL: Login failed: $LOGIN"
-  exit 1
-fi
-echo "PASS: Logged in as admin"
-echo ""
-
-api() {
-  local method=$1
-  local path=$2
-  local data=$3
-
-  if [ -n "$data" ]; then
-    curl -s -X "$method" "$BASE_URL$path" \
-      -H "Content-Type: application/json" \
-      -b "$COOKIE_JAR" \
-      -d "$data"
-  else
-    curl -s -X "$method" "$BASE_URL$path" \
-      -H "Content-Type: application/json" \
-      -b "$COOKIE_JAR"
-  fi
-}
+# Login using shared helper
+smoke_auth_login
 
 # ---- SETUP: Create test customer and vendor ----
 echo "=== A: Setup - Create Test Parties ==="

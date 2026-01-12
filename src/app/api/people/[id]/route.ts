@@ -1,12 +1,12 @@
 /**
  * /api/people/[id]
  *
- * Get, update, and delete a single person
+ * Get, update, and deactivate a person
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { people, parties, users, departments } from "@/db/schema";
+import { people, parties, departments, users, serviceProviders, items } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -25,12 +25,9 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-type PersonType = "staff" | "contractor" | "supplier_contact" | "sales_rep" | "service_provider" | "partner_contact" | "customer_contact";
-type ContactChannel = "whatsapp" | "email" | "phone" | "sms";
-
 /**
  * GET /api/people/[id]
- * Get person details
+ * Get person details with linked entities
  */
 export async function GET(
   req: NextRequest,
@@ -53,7 +50,62 @@ export async function GET(
       return NextResponse.json({ error: "Person not found" }, { status: 404 });
     }
 
-    return NextResponse.json(person);
+    // Fetch linked party name
+    let linkedPartyName: string | null = null;
+    if (person.linkedPartyId) {
+      const [party] = await db
+        .select({ name: parties.name })
+        .from(parties)
+        .where(eq(parties.id, person.linkedPartyId));
+      linkedPartyName = party?.name ?? null;
+    }
+
+    // Fetch linked user info
+    let linkedUserEmail: string | null = null;
+    if (person.linkedUserId) {
+      const [user] = await db
+        .select({ email: users.email })
+        .from(users)
+        .where(eq(users.id, person.linkedUserId));
+      linkedUserEmail = user?.email ?? null;
+    }
+
+    // Fetch department name
+    let departmentName: string | null = null;
+    if (person.departmentId) {
+      const [dept] = await db
+        .select({ name: departments.name })
+        .from(departments)
+        .where(eq(departments.id, person.departmentId));
+      departmentName = dept?.name ?? null;
+    }
+
+    // Fetch services this person can provide
+    const servicesProvidable = await db
+      .select({
+        itemId: items.id,
+        itemName: items.name,
+        isPreferred: serviceProviders.isPreferred,
+        hourlyRate: serviceProviders.hourlyRate,
+        fixedRate: serviceProviders.fixedRate,
+      })
+      .from(serviceProviders)
+      .innerJoin(items, eq(items.id, serviceProviders.itemId))
+      .where(
+        and(
+          eq(serviceProviders.tenantId, tenantId),
+          eq(serviceProviders.personId, id),
+          eq(serviceProviders.isActive, true)
+        )
+      );
+
+    return NextResponse.json({
+      ...person,
+      linkedPartyName,
+      linkedUserEmail,
+      departmentName,
+      servicesProvidable,
+    });
   } catch (error) {
     if (error instanceof TenantError) {
       return NextResponse.json({ error: error.message }, { status: error.statusCode });
@@ -88,7 +140,7 @@ export async function PUT(
     const audit = createAuditContext(tenantId, actor.actorId);
 
     const [existing] = await db
-      .select({ id: people.id })
+      .select({ id: people.id, isQuickAdd: people.isQuickAdd })
       .from(people)
       .where(and(eq(people.tenantId, tenantId), eq(people.id, id)));
 
@@ -99,20 +151,20 @@ export async function PUT(
     const body = await req.json();
 
     // Build update object
-    const updateData: Record<string, unknown> = {};
+    const updateData: Record<string, unknown> = { updatedAt: new Date() };
 
-    // Common fields
     if (body.fullName !== undefined) updateData.fullName = body.fullName;
     if (body.displayName !== undefined) updateData.displayName = body.displayName;
     if (body.types !== undefined) updateData.types = body.types;
     if (body.primaryEmail !== undefined) updateData.primaryEmail = body.primaryEmail;
+    if (body.secondaryEmails !== undefined) updateData.secondaryEmails = body.secondaryEmails;
     if (body.primaryPhone !== undefined) updateData.primaryPhone = body.primaryPhone;
+    if (body.secondaryPhones !== undefined) updateData.secondaryPhones = body.secondaryPhones;
     if (body.whatsappNumber !== undefined) updateData.whatsappNumber = body.whatsappNumber;
     if (body.preferredChannel !== undefined) updateData.preferredChannel = body.preferredChannel;
     if (body.channelFallbackOrder !== undefined) updateData.channelFallbackOrder = body.channelFallbackOrder;
     if (body.jobTitle !== undefined) updateData.jobTitle = body.jobTitle;
     if (body.notes !== undefined) updateData.notes = body.notes;
-    if (body.isActive !== undefined) updateData.isActive = body.isActive;
     if (body.metadata !== undefined) updateData.metadata = body.metadata;
 
     // Handle linked party
@@ -166,6 +218,12 @@ export async function PUT(
       updateData.departmentId = body.departmentId || null;
     }
 
+    // Mark quick-add as completed if profile is being updated
+    if (existing.isQuickAdd && Object.keys(updateData).length > 1) {
+      updateData.isQuickAdd = false;
+      updateData.quickAddCompletedAt = new Date();
+    }
+
     const [updated] = await db
       .update(people)
       .set(updateData)
@@ -189,8 +247,7 @@ export async function PUT(
 
 /**
  * DELETE /api/people/[id]
- * Soft-delete a person (set isActive to false)
- * Note: We don't hard delete people as they may have history
+ * Deactivate a person (soft delete)
  */
 export async function DELETE(
   req: NextRequest,
@@ -218,13 +275,12 @@ export async function DELETE(
       return NextResponse.json({ error: "Person not found" }, { status: 404 });
     }
 
-    // Soft delete - set isActive to false
     await db
       .update(people)
-      .set({ isActive: false })
+      .set({ isActive: false, updatedAt: new Date() })
       .where(and(eq(people.tenantId, tenantId), eq(people.id, id)));
 
-    await audit.log("person", id, "person_deleted", {});
+    await audit.log("person", id, "person_deactivated", {});
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -3,7 +3,7 @@
 # Subscription Plans Smoke Test
 #
 # Tests:
-# 1. GET /api/billing/plans returns 4 plans
+# 1. GET /api/billing/plans returns 3 plans
 # 2. Verify plan codes and structure
 # 3. Verify promotional plan properties
 #
@@ -24,8 +24,8 @@ smoke_auth_login
 echo "=== Test 1: List subscription plans ==="
 PLANS=$(api GET "/api/billing/plans")
 PLAN_COUNT=$(echo "$PLANS" | jq -r '.plans | length')
-if [ "$PLAN_COUNT" -ne 4 ]; then
-  echo "FAIL: Expected 4 plans, got $PLAN_COUNT"
+if [ "$PLAN_COUNT" -ne 3 ]; then
+  echo "FAIL: Expected 3 plans, got $PLAN_COUNT"
   echo "$PLANS"
   exit 1
 fi

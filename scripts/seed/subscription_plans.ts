@@ -26,9 +26,9 @@ interface PlanDefinition {
 
 const plans: PlanDefinition[] = [
   {
-    code: "MONTHLY_30",
+    code: "monthly_30",
     name: "Monthly",
-    description: "$30 per month",
+    description: "Full access billed monthly. Cancel anytime.",
     currency: "USD",
     priceAmount: "30.00",
     billingType: "recurring",
@@ -40,9 +40,9 @@ const plans: PlanDefinition[] = [
     isActive: true,
   },
   {
-    code: "SEMIANNUAL_25",
+    code: "six_month_pack_25",
     name: "6-Month Package",
-    description: "$25 per month, billed every 6 months ($150 upfront)",
+    description: "Best value - $25/month billed upfront for 6 months.",
     currency: "USD",
     priceAmount: "150.00",
     billingType: "recurring",
@@ -54,14 +54,14 @@ const plans: PlanDefinition[] = [
     isActive: true,
   },
   {
-    code: "OFFER_6M_FREE",
+    code: "promo_free_6m",
     name: "Limited Offer",
-    description: "Free for 6 months (limited time offer)",
+    description: "6 months free - promotional offer. Ends March 2026.",
     currency: "USD",
     priceAmount: "0.00",
     billingType: "trial",
     interval: "month",
-    intervalCount: 1,
+    intervalCount: 6,
     trialDays: 180,
     durationMonths: 6,
     isPromotional: true,

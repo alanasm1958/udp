@@ -22,7 +22,7 @@ source "$SCRIPT_DIR/_auth.sh"
 api_no_auth() {
   local method=$1
   local path=$2
-  local data=${3:-}
+  local data=$3
 
   if [ -n "$data" ]; then
     curl -s -X "$method" "$BASE_URL$path" \

@@ -1,8 +1,20 @@
 "use client";
 
 import * as React from "react";
-import { GlassCard, GlassInput, GlassButton, GlassTable, PageHeader, Spinner } from "@/components/ui/glass";
+import { GlassCard, GlassSelect, GlassButton, GlassTable, PageHeader, Spinner } from "@/components/ui/glass";
 import { apiGet } from "@/lib/http";
+
+interface Warehouse {
+  id: string;
+  code: string;
+  name: string;
+}
+
+interface Product {
+  id: string;
+  sku: string;
+  name: string;
+}
 
 interface InventoryBalanceRow {
   productId: string;
@@ -34,6 +46,28 @@ export default function InventoryBalancesPage() {
   const [data, setData] = React.useState<InventoryData | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [warehouses, setWarehouses] = React.useState<Warehouse[]>([]);
+  const [products, setProducts] = React.useState<Product[]>([]);
+  const [loadingMaster, setLoadingMaster] = React.useState(true);
+
+  // Load warehouses and products on mount
+  React.useEffect(() => {
+    async function loadMasterData() {
+      try {
+        const [warehouseRes, productRes] = await Promise.all([
+          apiGet<{ items: Warehouse[] }>("/api/master/warehouses?limit=100"),
+          apiGet<{ items: Product[] }>("/api/master/products?limit=200"),
+        ]);
+        setWarehouses(warehouseRes.items || []);
+        setProducts(productRes.items || []);
+      } catch {
+        // Silently fail - will show empty dropdowns
+      } finally {
+        setLoadingMaster(false);
+      }
+    }
+    loadMasterData();
+  }, []);
 
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -65,19 +99,25 @@ export default function InventoryBalancesPage() {
       <GlassCard padding="sm">
         <div className="flex flex-wrap items-end gap-4">
           <div className="w-64">
-            <GlassInput
-              label="Warehouse ID"
-              placeholder="UUID..."
+            <GlassSelect
+              label="Warehouse"
               value={warehouseId}
               onChange={(e) => setWarehouseId(e.target.value)}
+              options={[
+                { value: "", label: loadingMaster ? "Loading..." : "All Warehouses" },
+                ...warehouses.map((w) => ({ value: w.id, label: `${w.code} - ${w.name}` })),
+              ]}
             />
           </div>
           <div className="w-64">
-            <GlassInput
-              label="Product ID"
-              placeholder="UUID..."
+            <GlassSelect
+              label="Product"
               value={productId}
               onChange={(e) => setProductId(e.target.value)}
+              options={[
+                { value: "", label: loadingMaster ? "Loading..." : "All Products" },
+                ...products.map((p) => ({ value: p.id, label: `${p.sku || "N/A"} - ${p.name}` })),
+              ]}
             />
           </div>
           <GlassButton onClick={loadData} disabled={loading}>

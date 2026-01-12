@@ -12,11 +12,8 @@ import {
   GlassBadge,
   Spinner,
   EmptyState,
-  SlideOver,
   useToast,
 } from "@/components/ui/glass";
-import { useAIValidator } from "@/hooks/useAIValidator";
-import { AIHintBanner } from "@/components/operations/AIHintBanner";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/http";
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -136,34 +133,6 @@ interface AIRecommendation {
   riskLevel: "low" | "medium" | "high";
   reasoning: string;
   tactics: string[];
-}
-
-/* Record Activity types */
-type RecordActivityMode =
-  | "select"
-  | "record-interaction"
-  | "record-spend"
-  | "track-conversion"
-  | "add-task"
-  | "quick-post";
-
-interface RecordActivityForm {
-  // Common fields
-  campaignId: string;
-  channelType: string;
-  description: string;
-  scheduledDate: string;
-  // Record interaction
-  customerId: string;
-  interactionType: string;
-  outcome: string;
-  // Record spend
-  amount: string;
-  // Track conversion
-  conversionType: string;
-  value: string;
-  // Quick post
-  content: string;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -856,7 +825,7 @@ function CampaignWizard({
             {step === 2 && (
               <div className="space-y-6">
                 <div className="text-center mb-6">
-                  <h3 className="text-lg font-semibold text-white mb-2">What&apos;s your goal?</h3>
+                  <h3 className="text-lg font-semibold text-white mb-2">What's your goal?</h3>
                   <p className="text-sm text-white/60">Define what success looks like for this campaign</p>
                 </div>
 
@@ -928,7 +897,7 @@ function CampaignWizard({
             {step === 3 && (
               <div className="space-y-6">
                 <div className="text-center mb-6">
-                  <h3 className="text-lg font-semibold text-white mb-2">Who&apos;s your audience?</h3>
+                  <h3 className="text-lg font-semibold text-white mb-2">Who's your audience?</h3>
                   <p className="text-sm text-white/60">Define your target audience and preferred channels</p>
                 </div>
 
@@ -1544,32 +1513,7 @@ function ChannelConnectionModal({
         addToast("success", `${channel.name} connected successfully!`);
         onClose();
       }
-    } catch (error: unknown) {
-      // Check if error contains response data with needsConfiguration
-      if (error && typeof error === "object" && "data" in error) {
-        const err = error as { data?: { needsConfiguration?: boolean; provider?: string; error?: string } };
-        if (err.data?.needsConfiguration && err.data?.provider) {
-          // Show OAuth configuration form
-          setOauthProvider(err.data.provider);
-          setShowOAuthConfig(true);
-          setLoading(false);
-          return;
-        }
-      }
-      
-      // Fallback: if it's a 400 error for OAuth, show config form
-      if (error && typeof error === "object" && "status" in error && (error as { status?: number }).status === 400) {
-        const err = error as { data?: { needsConfiguration?: boolean; provider?: string } };
-        if (err.data?.needsConfiguration) {
-          // Map channel ID to credential provider key
-          const providerKey = channel.id === "instagram" || channel.id === "facebook" ? "meta" : channel.id;
-          setOauthProvider(err.data.provider || providerKey);
-          setShowOAuthConfig(true);
-          setLoading(false);
-          return;
-        }
-      }
-      
+    } catch (error) {
       addToast("error", error instanceof Error ? error.message : "Failed to connect");
     } finally {
       setLoading(false);
@@ -1769,7 +1713,7 @@ function ChannelConnectionModal({
             </div>
           ) : (
             <GlassCard className="!bg-white/5 mb-6">
-              <h4 className="text-sm font-medium text-white/70 mb-3">What you&apos;ll get:</h4>
+              <h4 className="text-sm font-medium text-white/70 mb-3">What you'll get:</h4>
               <ul className="space-y-2 text-sm text-white/60">
                 <li className="flex items-center gap-2">
                   <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1856,132 +1800,6 @@ function MarketingPageContent() {
 
   const [showWizard, setShowWizard] = React.useState(false);
   const [connectingChannel, setConnectingChannel] = React.useState<Omit<Channel, "connected" | "metrics"> | null>(null);
-
-  // Record Activity state
-  const [showRecordActivity, setShowRecordActivity] = React.useState(false);
-  const [activityMode, setActivityMode] = React.useState<RecordActivityMode>("select");
-  const [activityForm, setActivityForm] = React.useState<RecordActivityForm>({
-    campaignId: "",
-    channelType: "",
-    description: "",
-    scheduledDate: new Date().toISOString().split("T")[0],
-    customerId: "",
-    interactionType: "",
-    outcome: "",
-    amount: "",
-    conversionType: "",
-    value: "",
-    content: "",
-  });
-  const [activityLoading, setActivityLoading] = React.useState(false);
-
-  // AI hints for Record Activity
-  const { hints: activityHints, dismissHint: dismissActivityHint } = useAIValidator(
-    {
-      mode: activityMode !== "select" ? activityMode : undefined,
-      campaignId: activityForm.campaignId || undefined,
-      channelType: activityForm.channelType || undefined,
-      amount: activityForm.amount ? parseFloat(activityForm.amount) : undefined,
-      scheduledDate: activityForm.scheduledDate || undefined,
-      customerId: activityForm.customerId || undefined,
-      description: activityForm.description || undefined,
-    },
-    { domain: "marketing", debounceMs: 600, enabled: showRecordActivity && activityMode !== "select" }
-  );
-
-  const resetActivityForm = () => {
-    setActivityForm({
-      campaignId: "",
-      channelType: "",
-      description: "",
-      scheduledDate: new Date().toISOString().split("T")[0],
-      customerId: "",
-      interactionType: "",
-      outcome: "",
-      amount: "",
-      conversionType: "",
-      value: "",
-      content: "",
-    });
-  };
-
-  const handleOpenRecordActivity = () => {
-    setShowRecordActivity(true);
-    setActivityMode("select");
-    resetActivityForm();
-  };
-
-  const handleCloseRecordActivity = () => {
-    setShowRecordActivity(false);
-    setActivityMode("select");
-    resetActivityForm();
-  };
-
-  const handleSubmitActivity = async () => {
-    setActivityLoading(true);
-    try {
-      // Submit based on mode
-      switch (activityMode) {
-        case "record-spend":
-          await apiPost("/api/marketing/campaigns/" + activityForm.campaignId + "/spend", {
-            amount: parseFloat(activityForm.amount),
-            channelType: activityForm.channelType,
-            description: activityForm.description,
-            date: activityForm.scheduledDate,
-          });
-          addToast("success", "Spend recorded successfully");
-          break;
-
-        case "add-task":
-          await apiPost("/api/marketing/tasks", {
-            title: activityForm.description,
-            dueDate: activityForm.scheduledDate,
-            channelType: activityForm.channelType,
-            campaignId: activityForm.campaignId || null,
-          });
-          addToast("success", "Task added successfully");
-          break;
-
-        case "track-conversion":
-          await apiPost("/api/marketing/campaigns/" + activityForm.campaignId + "/conversions", {
-            type: activityForm.conversionType,
-            value: parseFloat(activityForm.value) || 0,
-            description: activityForm.description,
-            date: activityForm.scheduledDate,
-          });
-          addToast("success", "Conversion tracked successfully");
-          break;
-
-        case "record-interaction":
-          await apiPost("/api/marketing/interactions", {
-            customerId: activityForm.customerId,
-            channelType: activityForm.channelType,
-            interactionType: activityForm.interactionType,
-            outcome: activityForm.outcome,
-            description: activityForm.description,
-          });
-          addToast("success", "Interaction recorded successfully");
-          break;
-
-        case "quick-post":
-          await apiPost("/api/marketing/tasks", {
-            title: `Post: ${activityForm.content.substring(0, 50)}...`,
-            description: activityForm.content,
-            dueDate: activityForm.scheduledDate,
-            channelType: activityForm.channelType,
-            campaignId: activityForm.campaignId || null,
-            taskType: "post",
-          });
-          addToast("success", "Post scheduled successfully");
-          break;
-      }
-      handleCloseRecordActivity();
-    } catch (error) {
-      addToast("error", error instanceof Error ? error.message : "Failed to save");
-    } finally {
-      setActivityLoading(false);
-    }
-  };
 
   // Fetch connected channels from API
   const fetchConnectedChannels = React.useCallback(async () => {
@@ -2102,20 +1920,12 @@ function MarketingPageContent() {
             Manage campaigns, track performance, and grow your business
           </p>
         </div>
-        <div className="flex gap-2">
-          <GlassButton variant="primary" onClick={handleOpenRecordActivity}>
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-            </svg>
-            Record Activity
-          </GlassButton>
-          <GlassButton variant="ghost" onClick={() => setShowWizard(true)}>
-            <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New Campaign
-          </GlassButton>
-        </div>
+        <GlassButton variant="primary" onClick={() => setShowWizard(true)}>
+          <svg className="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
+          Create Campaign
+        </GlassButton>
       </div>
 
       {/* Analytics Section */}
@@ -2268,370 +2078,6 @@ function MarketingPageContent() {
         onClose={() => setConnectingChannel(null)}
         onConnect={handleConnectChannel}
       />
-
-      {/* Record Activity SlideOver */}
-      <SlideOver
-        open={showRecordActivity}
-        onClose={handleCloseRecordActivity}
-        title={activityMode === "select" ? "Record Activity" : ""}
-      >
-        <div className="space-y-4">
-          {/* Back button and title for sub-modes */}
-          {activityMode !== "select" && (
-            <div className="flex items-center gap-2 pb-2 border-b border-white/10">
-              <button
-                onClick={() => {
-                  setActivityMode("select");
-                  resetActivityForm();
-                }}
-                className="p-1 rounded-lg hover:bg-white/10 transition-colors"
-              >
-                <svg className="w-5 h-5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-                </svg>
-              </button>
-              <h3 className="text-lg font-semibold text-white">
-                {activityMode === "record-interaction" && "Log Interaction"}
-                {activityMode === "record-spend" && "Record Spend"}
-                {activityMode === "track-conversion" && "Track Conversion"}
-                {activityMode === "add-task" && "Add Marketing Task"}
-                {activityMode === "quick-post" && "Schedule Post"}
-              </h3>
-            </div>
-          )}
-
-          {/* Mode Selection */}
-          {activityMode === "select" && (
-            <div className="space-y-2">
-              <p className="text-sm text-white/60 mb-4">What would you like to record?</p>
-
-              {[
-                {
-                  mode: "record-interaction" as RecordActivityMode,
-                  icon: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
-                  label: "Log Interaction",
-                  description: "Record a customer touchpoint (call, message, meeting)",
-                },
-                {
-                  mode: "record-spend" as RecordActivityMode,
-                  icon: "M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z",
-                  label: "Record Spend",
-                  description: "Log advertising or marketing costs",
-                },
-                {
-                  mode: "track-conversion" as RecordActivityMode,
-                  icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z",
-                  label: "Track Conversion",
-                  description: "Manually record a sale or lead conversion",
-                },
-                {
-                  mode: "add-task" as RecordActivityMode,
-                  icon: "M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01",
-                  label: "Add Marketing Task",
-                  description: "Create a task or reminder for marketing work",
-                },
-                {
-                  mode: "quick-post" as RecordActivityMode,
-                  icon: "M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z",
-                  label: "Schedule Post",
-                  description: "Draft and schedule social media content",
-                },
-              ].map((option) => (
-                <button
-                  key={option.mode}
-                  onClick={() => setActivityMode(option.mode)}
-                  className="w-full p-4 rounded-xl bg-white/5 hover:bg-white/10 text-left transition-all group"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2 rounded-lg bg-blue-500/20 group-hover:bg-blue-500/30 transition-colors">
-                      <svg className="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d={option.icon} />
-                      </svg>
-                    </div>
-                    <div className="flex-1">
-                      <h4 className="font-medium text-white">{option.label}</h4>
-                      <p className="text-xs text-white/50">{option.description}</p>
-                    </div>
-                    <svg className="w-4 h-4 text-white/30 group-hover:text-white/60 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                    </svg>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {/* AI Hints Banner */}
-          {activityHints.length > 0 && activityMode !== "select" && (
-            <AIHintBanner hints={activityHints} onDismiss={dismissActivityHint} compact />
-          )}
-
-          {/* Record Interaction Form */}
-          {activityMode === "record-interaction" && (
-            <div className="space-y-4">
-              <GlassSelect
-                label="Channel"
-                value={activityForm.channelType}
-                onChange={(e) => setActivityForm((f) => ({ ...f, channelType: e.target.value }))}
-                options={[
-                  { value: "", label: "Select channel..." },
-                  { value: "whatsapp", label: "WhatsApp" },
-                  { value: "instagram", label: "Instagram" },
-                  { value: "facebook", label: "Facebook" },
-                  { value: "email", label: "Email" },
-                  { value: "phone", label: "Phone Call" },
-                  { value: "in_person", label: "In Person" },
-                ]}
-              />
-              <GlassSelect
-                label="Interaction Type"
-                value={activityForm.interactionType}
-                onChange={(e) => setActivityForm((f) => ({ ...f, interactionType: e.target.value }))}
-                options={[
-                  { value: "", label: "Select type..." },
-                  { value: "inquiry", label: "Product Inquiry" },
-                  { value: "support", label: "Support Request" },
-                  { value: "feedback", label: "Feedback" },
-                  { value: "complaint", label: "Complaint" },
-                  { value: "general", label: "General Chat" },
-                ]}
-              />
-              <GlassInput
-                label="Customer ID (optional)"
-                value={activityForm.customerId}
-                onChange={(e) => setActivityForm((f) => ({ ...f, customerId: e.target.value }))}
-                placeholder="Leave blank for anonymous"
-              />
-              <GlassSelect
-                label="Outcome"
-                value={activityForm.outcome}
-                onChange={(e) => setActivityForm((f) => ({ ...f, outcome: e.target.value }))}
-                options={[
-                  { value: "", label: "Select outcome..." },
-                  { value: "resolved", label: "Resolved" },
-                  { value: "follow_up", label: "Needs Follow-up" },
-                  { value: "converted", label: "Converted to Sale" },
-                  { value: "lost", label: "Lost Interest" },
-                ]}
-              />
-              <GlassTextarea
-                label="Notes"
-                value={activityForm.description}
-                onChange={(e) => setActivityForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="Brief description of the interaction..."
-                rows={3}
-              />
-              <GlassButton
-                variant="primary"
-                className="w-full"
-                onClick={handleSubmitActivity}
-                disabled={activityLoading || !activityForm.channelType}
-              >
-                {activityLoading ? <Spinner size="sm" /> : "Save Interaction"}
-              </GlassButton>
-            </div>
-          )}
-
-          {/* Record Spend Form */}
-          {activityMode === "record-spend" && (
-            <div className="space-y-4">
-              <GlassSelect
-                label="Campaign"
-                value={activityForm.campaignId}
-                onChange={(e) => setActivityForm((f) => ({ ...f, campaignId: e.target.value }))}
-                options={[
-                  { value: "", label: "Select campaign..." },
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
-              <GlassSelect
-                label="Channel"
-                value={activityForm.channelType}
-                onChange={(e) => setActivityForm((f) => ({ ...f, channelType: e.target.value }))}
-                options={[
-                  { value: "", label: "Select channel..." },
-                  ...AVAILABLE_CHANNELS.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
-              <GlassInput
-                label="Amount (USD)"
-                type="number"
-                value={activityForm.amount}
-                onChange={(e) => setActivityForm((f) => ({ ...f, amount: e.target.value }))}
-                placeholder="0.00"
-              />
-              <GlassInput
-                label="Date"
-                type="date"
-                value={activityForm.scheduledDate}
-                onChange={(e) => setActivityForm((f) => ({ ...f, scheduledDate: e.target.value }))}
-              />
-              <GlassInput
-                label="Description (optional)"
-                value={activityForm.description}
-                onChange={(e) => setActivityForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="e.g., Facebook Ads - Week 3"
-              />
-              <GlassButton
-                variant="primary"
-                className="w-full"
-                onClick={handleSubmitActivity}
-                disabled={activityLoading || !activityForm.campaignId || !activityForm.amount}
-              >
-                {activityLoading ? <Spinner size="sm" /> : "Record Spend"}
-              </GlassButton>
-            </div>
-          )}
-
-          {/* Track Conversion Form */}
-          {activityMode === "track-conversion" && (
-            <div className="space-y-4">
-              <GlassSelect
-                label="Campaign"
-                value={activityForm.campaignId}
-                onChange={(e) => setActivityForm((f) => ({ ...f, campaignId: e.target.value }))}
-                options={[
-                  { value: "", label: "Select campaign..." },
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
-              <GlassSelect
-                label="Conversion Type"
-                value={activityForm.conversionType}
-                onChange={(e) => setActivityForm((f) => ({ ...f, conversionType: e.target.value }))}
-                options={[
-                  { value: "", label: "Select type..." },
-                  { value: "purchase", label: "Purchase" },
-                  { value: "lead", label: "Lead Captured" },
-                  { value: "signup", label: "Sign Up" },
-                  { value: "download", label: "Download" },
-                  { value: "booking", label: "Booking" },
-                ]}
-              />
-              <GlassInput
-                label="Value (USD)"
-                type="number"
-                value={activityForm.value}
-                onChange={(e) => setActivityForm((f) => ({ ...f, value: e.target.value }))}
-                placeholder="0.00"
-              />
-              <GlassInput
-                label="Date"
-                type="date"
-                value={activityForm.scheduledDate}
-                onChange={(e) => setActivityForm((f) => ({ ...f, scheduledDate: e.target.value }))}
-              />
-              <GlassInput
-                label="Description (optional)"
-                value={activityForm.description}
-                onChange={(e) => setActivityForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="Notes about this conversion..."
-              />
-              <GlassButton
-                variant="primary"
-                className="w-full"
-                onClick={handleSubmitActivity}
-                disabled={activityLoading || !activityForm.campaignId || !activityForm.conversionType}
-              >
-                {activityLoading ? <Spinner size="sm" /> : "Track Conversion"}
-              </GlassButton>
-            </div>
-          )}
-
-          {/* Add Task Form */}
-          {activityMode === "add-task" && (
-            <div className="space-y-4">
-              <GlassInput
-                label="Task Description"
-                value={activityForm.description}
-                onChange={(e) => setActivityForm((f) => ({ ...f, description: e.target.value }))}
-                placeholder="What needs to be done?"
-              />
-              <GlassInput
-                label="Due Date"
-                type="date"
-                value={activityForm.scheduledDate}
-                onChange={(e) => setActivityForm((f) => ({ ...f, scheduledDate: e.target.value }))}
-              />
-              <GlassSelect
-                label="Channel (optional)"
-                value={activityForm.channelType}
-                onChange={(e) => setActivityForm((f) => ({ ...f, channelType: e.target.value }))}
-                options={[
-                  { value: "", label: "No specific channel" },
-                  ...AVAILABLE_CHANNELS.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
-              <GlassSelect
-                label="Campaign (optional)"
-                value={activityForm.campaignId}
-                onChange={(e) => setActivityForm((f) => ({ ...f, campaignId: e.target.value }))}
-                options={[
-                  { value: "", label: "No specific campaign" },
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
-              <GlassButton
-                variant="primary"
-                className="w-full"
-                onClick={handleSubmitActivity}
-                disabled={activityLoading || !activityForm.description}
-              >
-                {activityLoading ? <Spinner size="sm" /> : "Add Task"}
-              </GlassButton>
-            </div>
-          )}
-
-          {/* Quick Post Form */}
-          {activityMode === "quick-post" && (
-            <div className="space-y-4">
-              <GlassSelect
-                label="Channel"
-                value={activityForm.channelType}
-                onChange={(e) => setActivityForm((f) => ({ ...f, channelType: e.target.value }))}
-                options={[
-                  { value: "", label: "Select channel..." },
-                  { value: "instagram", label: "Instagram" },
-                  { value: "facebook", label: "Facebook" },
-                  { value: "whatsapp", label: "WhatsApp Status" },
-                  { value: "tiktok", label: "TikTok" },
-                  { value: "linkedin", label: "LinkedIn" },
-                ]}
-              />
-              <GlassTextarea
-                label="Content"
-                value={activityForm.content}
-                onChange={(e) => setActivityForm((f) => ({ ...f, content: e.target.value }))}
-                placeholder="Write your post content..."
-                rows={4}
-              />
-              <GlassInput
-                label="Schedule Date"
-                type="date"
-                value={activityForm.scheduledDate}
-                onChange={(e) => setActivityForm((f) => ({ ...f, scheduledDate: e.target.value }))}
-              />
-              <GlassSelect
-                label="Campaign (optional)"
-                value={activityForm.campaignId}
-                onChange={(e) => setActivityForm((f) => ({ ...f, campaignId: e.target.value }))}
-                options={[
-                  { value: "", label: "No specific campaign" },
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
-              <GlassButton
-                variant="primary"
-                className="w-full"
-                onClick={handleSubmitActivity}
-                disabled={activityLoading || !activityForm.channelType || !activityForm.content}
-              >
-                {activityLoading ? <Spinner size="sm" /> : "Schedule Post"}
-              </GlassButton>
-            </div>
-          )}
-        </div>
-      </SlideOver>
     </div>
   );
 }

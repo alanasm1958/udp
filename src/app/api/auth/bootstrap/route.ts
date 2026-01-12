@@ -27,58 +27,29 @@ export async function POST(): Promise<NextResponse> {
   try {
     // Seed subscription plans first (global - not tenant-scoped)
     // This runs even if user exists to ensure plans are always available
-    // Plans must match scripts/seed/subscription_plans.ts
     const plansToSeed = [
       {
         code: "free",
         name: "Free",
-        description: "Basic features, free forever.",
-        priceAmount: "0.00",
-        billingType: "recurring" as const,
-        interval: "month",
-        intervalCount: 1,
+        priceMonthlyCents: 0,
         currency: "USD",
         stripePriceId: null,
         isActive: true,
       },
       {
-        code: "monthly_30",
-        name: "Monthly",
-        description: "Full access billed monthly. Cancel anytime.",
-        priceAmount: "30.00",
-        billingType: "recurring" as const,
-        interval: "month",
-        intervalCount: 1,
+        code: "starter",
+        name: "Starter",
+        priceMonthlyCents: 2900, // $29/mo
         currency: "USD",
-        stripePriceId: null,
+        stripePriceId: process.env.STRIPE_PRICE_STARTER || null,
         isActive: true,
       },
       {
-        code: "six_month_pack_25",
-        name: "6-Month Package",
-        description: "Best value - $25/month billed upfront for 6 months.",
-        priceAmount: "150.00",
-        billingType: "recurring" as const,
-        interval: "month",
-        intervalCount: 6,
-        durationMonths: 6,
+        code: "pro",
+        name: "Pro",
+        priceMonthlyCents: 9900, // $99/mo
         currency: "USD",
-        stripePriceId: null,
-        isActive: true,
-      },
-      {
-        code: "promo_free_6m",
-        name: "Limited Offer",
-        description: "6 months free - promotional offer. Ends March 2026.",
-        priceAmount: "0.00",
-        billingType: "trial" as const,
-        interval: "month",
-        intervalCount: 6,
-        trialDays: 180,
-        durationMonths: 6,
-        isPromotional: true,
-        currency: "USD",
-        stripePriceId: null,
+        stripePriceId: process.env.STRIPE_PRICE_PRO || null,
         isActive: true,
       },
     ];
@@ -116,7 +87,7 @@ export async function POST(): Promise<NextResponse> {
 
         await db.insert(tenantSubscriptions).values({
           tenantId: tenant.id,
-          planCode: "monthly_30", // Give dev tenant full access
+          planCode: "pro", // Give dev tenant pro access
           status: "active",
           currentPeriodStart: now,
           currentPeriodEnd: periodEnd,
@@ -251,7 +222,7 @@ export async function POST(): Promise<NextResponse> {
 
       await db.insert(tenantSubscriptions).values({
         tenantId: tenant.id,
-        planCode: "monthly_30", // Give dev tenant full access
+        planCode: "pro", // Give dev tenant pro access
         status: "active",
         currentPeriodStart: now,
         currentPeriodEnd: periodEnd,

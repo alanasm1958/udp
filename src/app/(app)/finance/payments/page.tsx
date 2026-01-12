@@ -117,6 +117,19 @@ function PaymentsContent() {
     loadParties();
   }, [loadData, loadParties]);
 
+  // Handle create param from URL (Quick Action from Dashboard)
+  React.useEffect(() => {
+    const createParam = searchParams.get("create");
+    if (createParam === "true") {
+      setCreateOpen(true);
+      // Clear the param from URL without reloading
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("create");
+      const newUrl = params.toString() ? `/finance/payments?${params.toString()}` : "/finance/payments";
+      router.replace(newUrl, { scroll: false });
+    }
+  }, [searchParams, router]);
+
   // Update URL (filters auto-reload via useEffect)
   const updateFilter = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());

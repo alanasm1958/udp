@@ -24,7 +24,7 @@ export default function SignupPage() {
   const [adminName, setAdminName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [planCode, setPlanCode] = React.useState("");
+  const [planCode, setPlanCode] = React.useState("OFFER_6M_FREE");
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [plans, setPlans] = React.useState<Plan[]>([]);
@@ -37,34 +37,16 @@ export default function SignupPage() {
         const res = await fetch("/api/billing/plans");
         if (res.ok) {
           const data = await res.json();
-          const fetchedPlans = data.plans || [];
-          setPlans(fetchedPlans);
-          
-          // Set default plan to first available plan, or free plan if available
-          if (fetchedPlans.length > 0) {
-            const freePlan = fetchedPlans.find((p: Plan) => p.code === "free" || parseFloat(p.priceAmount) === 0);
-            setPlanCode(freePlan?.code || fetchedPlans[0].code);
-          }
-        } else {
-          // Fallback plans if API fails
-          const fallbackPlans = [
-            { code: "free", name: "Free", description: "Basic features, free forever.", priceAmount: "0.00" },
-            { code: "monthly_30", name: "Monthly", description: "Full access - $30/month", priceAmount: "30.00" },
-            { code: "six_month_pack_25", name: "6-Month Package", description: "Best value - $25/month", priceAmount: "150.00" },
-          ];
-          setPlans(fallbackPlans);
-          setPlanCode(fallbackPlans[0].code);
+          setPlans(data.plans || []);
         }
       } catch (err) {
         console.error("Failed to fetch plans:", err);
         // Fallback plans
-        const fallbackPlans = [
-          { code: "free", name: "Free", description: "Basic features, free forever.", priceAmount: "0.00" },
-          { code: "monthly_30", name: "Monthly", description: "Full access - $30/month", priceAmount: "30.00" },
-          { code: "six_month_pack_25", name: "6-Month Package", description: "Best value - $25/month", priceAmount: "150.00" },
-        ];
-        setPlans(fallbackPlans);
-        setPlanCode(fallbackPlans[0].code);
+        setPlans([
+          { code: "OFFER_6M_FREE", name: "Limited Offer", description: "Free for 6 months", priceAmount: "0.00" },
+          { code: "MONTHLY_30", name: "Monthly", description: "$30 per month", priceAmount: "30.00" },
+          { code: "SEMIANNUAL_25", name: "6-Month Package", description: "$25/mo billed every 6 months", priceAmount: "150.00" },
+        ]);
       } finally {
         setPlansLoading(false);
       }
@@ -183,18 +165,13 @@ export default function SignupPage() {
                   <Spinner size="sm" />
                   <span className="ml-2 text-sm text-white/50">Loading plans...</span>
                 </div>
-              ) : plans.length === 0 ? (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
-                  <p className="text-sm text-red-400">No plans available. Please contact support.</p>
-                </div>
               ) : (
                 <GlassSelect
                   label="Select Plan"
                   value={planCode}
                   onChange={(e) => setPlanCode(e.target.value)}
                   options={planOptions}
-                  disabled={loading || plansLoading}
-                  required
+                  disabled={loading}
                 />
               )}
 
