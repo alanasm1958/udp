@@ -825,7 +825,7 @@ function CampaignWizard({
             {step === 2 && (
               <div className="space-y-6">
                 <div className="text-center mb-6">
-                  <h3 className="text-lg font-semibold text-white mb-2">What's your goal?</h3>
+                  <h3 className="text-lg font-semibold text-white mb-2">What&apos;s your goal?</h3>
                   <p className="text-sm text-white/60">Define what success looks like for this campaign</p>
                 </div>
 
@@ -897,7 +897,7 @@ function CampaignWizard({
             {step === 3 && (
               <div className="space-y-6">
                 <div className="text-center mb-6">
-                  <h3 className="text-lg font-semibold text-white mb-2">Who's your audience?</h3>
+                  <h3 className="text-lg font-semibold text-white mb-2">Who&apos;s your audience?</h3>
                   <p className="text-sm text-white/60">Define your target audience and preferred channels</p>
                 </div>
 
@@ -1713,7 +1713,7 @@ function ChannelConnectionModal({
             </div>
           ) : (
             <GlassCard className="!bg-white/5 mb-6">
-              <h4 className="text-sm font-medium text-white/70 mb-3">What you'll get:</h4>
+              <h4 className="text-sm font-medium text-white/70 mb-3">What you&apos;ll get:</h4>
               <ul className="space-y-2 text-sm text-white/60">
                 <li className="flex items-center gap-2">
                   <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

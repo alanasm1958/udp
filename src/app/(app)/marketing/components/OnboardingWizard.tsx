@@ -327,7 +327,7 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
         return (
           <div className="space-y-6">
             <div className="text-center mb-6">
-              <h3 className="text-xl font-semibold text-white mb-2">What's your budget?</h3>
+              <h3 className="text-xl font-semibold text-white mb-2">What&apos;s your budget?</h3>
               <p className="text-sm text-white/60">Set a monthly marketing budget or let us recommend one</p>
             </div>
 
@@ -392,7 +392,7 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
           <div className="space-y-6">
             <div className="text-center mb-6">
               <h3 className="text-xl font-semibold text-white mb-2">Any channel preferences?</h3>
-              <p className="text-sm text-white/60">Select channels you'd like to use, or skip to let AI decide</p>
+              <p className="text-sm text-white/60">Select channels you&apos;d like to use, or skip to let AI decide</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">

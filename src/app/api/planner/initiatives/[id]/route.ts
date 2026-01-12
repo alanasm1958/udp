@@ -48,7 +48,7 @@ export async function PATCH(req: NextRequest, context: RouteContext): Promise<Ne
     const { title, description, priority, status, horizon } = body;
 
     // Get actor
-    let actor = await db
+    const actor = await db
       .select()
       .from(actors)
       .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))

@@ -117,7 +117,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
     }
 
     // Get or create tenant settings
-    let settings = await db
+    const settings = await db
       .select()
       .from(tenantSettings)
       .where(eq(tenantSettings.tenantId, tenantId))

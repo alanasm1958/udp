@@ -248,7 +248,7 @@ export async function POST(req: NextRequest, context: RouteContext): Promise<Nex
       .limit(20);
 
     // Get or create actor
-    let actor = await db
+    const actor = await db
       .select()
       .from(actors)
       .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))

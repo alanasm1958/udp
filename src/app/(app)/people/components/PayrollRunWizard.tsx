@@ -348,7 +348,7 @@ export function PayrollRunWizard({ onClose, onCreated }: PayrollRunWizardProps) 
                 <div className="flex items-start gap-3">
                   <div className="text-blue-400 mt-0.5">{Icons.info}</div>
                   <div className="text-sm text-blue-400/80">
-                    After creating the run, you'll be able to calculate payroll for all active employees,
+                    After creating the run, you&apos;ll be able to calculate payroll for all active employees,
                     review the results, and post to the general ledger.
                   </div>
                 </div>

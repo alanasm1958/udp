@@ -77,7 +77,7 @@ export async function PATCH(req: NextRequest, context: RouteContext): Promise<Ne
     }
 
     // Get or create actor for user
-    let actor = await db
+    const actor = await db
       .select()
       .from(actors)
       .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))
@@ -184,7 +184,7 @@ export async function DELETE(req: NextRequest, context: RouteContext): Promise<N
     }
 
     // Get actor
-    let actor = await db
+    const actor = await db
       .select()
       .from(actors)
       .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))

@@ -296,7 +296,7 @@ export function PersonProfileDrawer({ open, onClose, personId, onEdit }: PersonP
               <div>
                 <h2 className="text-xl font-semibold text-white">{person.fullName}</h2>
                 {person.displayName && (
-                  <p className="text-sm text-white/50">"{person.displayName}"</p>
+                  <p className="text-sm text-white/50">&quot;{person.displayName}&quot;</p>
                 )}
                 <div className="flex flex-wrap gap-1 mt-2">
                   {person.types.map((type) => (

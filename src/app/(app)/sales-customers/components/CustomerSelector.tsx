@@ -103,7 +103,7 @@ export function CustomerSelector({
             {/* Explanatory Note */}
             <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
                 <p className="text-xs text-blue-400">
-                    <strong>Choose a customer:</strong> Use "General" for walk-in/one-time sales,
+                    <strong>Choose a customer:</strong> Use &quot;General&quot; for walk-in/one-time sales,
                     select an existing customer, or create a new one inline.
                 </p>
             </div>

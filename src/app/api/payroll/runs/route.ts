@@ -49,7 +49,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const conditions = [eq(payrollRuns.tenantId, tenantId)];
 
     if (statusFilter) {
-      conditions.push(eq(payrollRuns.status, statusFilter as any));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      conditions.push(eq(payrollRuns.status, statusFilter as (typeof payrollRuns.status.enumValues)[number]));
     }
 
     const runs = await db

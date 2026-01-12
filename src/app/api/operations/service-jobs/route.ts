@@ -106,7 +106,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     // Build the query
-    let jobsQuery = db
+    const jobsQuery = db
       .select({
         id: serviceJobs.id,
         jobNumber: serviceJobs.jobNumber,

@@ -231,7 +231,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // Get or create actor
-    let actor = await db
+    const actor = await db
       .select()
       .from(actors)
       .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))

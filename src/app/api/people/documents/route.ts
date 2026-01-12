@@ -251,7 +251,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     // Validate employee exists and get person ID
-    let employeeIdToLink = body.employeeId;
+    const employeeIdToLink = body.employeeId;
     if (body.employeeId && isValidUuid(body.employeeId)) {
       const [emp] = await db
         .select({ id: employees.id, personId: employees.personId })

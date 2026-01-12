@@ -193,13 +193,7 @@ function CycleDetailDrawer({ cycle, open, onClose, onRefresh }: CycleDrawerProps
   const [loading, setLoading] = React.useState(false);
   const [updating, setUpdating] = React.useState(false);
 
-  React.useEffect(() => {
-    if (cycle && open) {
-      loadReviews();
-    }
-  }, [cycle?.id, open]);
-
-  const loadReviews = async () => {
+  const loadReviews = React.useCallback(async () => {
     if (!cycle) return;
     setLoading(true);
     try {
@@ -212,7 +206,13 @@ function CycleDetailDrawer({ cycle, open, onClose, onRefresh }: CycleDrawerProps
       console.error("Failed to load reviews:", error);
     }
     setLoading(false);
-  };
+  }, [cycle]);
+
+  React.useEffect(() => {
+    if (cycle && open) {
+      loadReviews();
+    }
+  }, [cycle, open, loadReviews]);
 
   const handleStatusChange = async (newStatus: string) => {
     if (!cycle) return;
