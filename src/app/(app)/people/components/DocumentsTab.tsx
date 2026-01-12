@@ -292,7 +292,11 @@ function DocumentDetailDrawer({
    MAIN COMPONENT
    ============================================================================= */
 
-export function DocumentsTab() {
+interface DocumentsTabProps {
+  onRecordActivity?: () => void;
+}
+
+export function DocumentsTab({ onRecordActivity }: DocumentsTabProps) {
   const [documents, setDocuments] = React.useState<HRDocument[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [categoryFilter, setCategoryFilter] = React.useState("");

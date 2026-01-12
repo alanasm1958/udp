@@ -96,6 +96,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         currentPeriodEnd: periodEnd,
         cancelAtPeriodEnd: false,
         metadata: { source: "dev_checkout" },
+        createdByActorId: session.userId,
       });
 
       // Log subscription event
@@ -213,6 +214,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           currentPeriodEnd: now,
           stripeCustomerId,
           cancelAtPeriodEnd: false,
+          createdByActorId: session.userId,
         });
       }
     }

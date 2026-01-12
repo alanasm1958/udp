@@ -5,9 +5,9 @@
  * Uses localStorage for values in browser, falls back to defaults for dev.
  */
 
-// Default IDs from smoke test scripts
-const DEFAULT_TENANT_ID = "21106d5d-71bb-4a2a-a0d8-1ea698d37989";
-const DEFAULT_USER_ID = "2aaf5a1d-cd8d-4b36-8fcb-0f59c70ef7b4";
+// Default IDs for dev mode (matches seed data)
+const DEFAULT_TENANT_ID = "19ff1b5c-3d71-4f83-a622-cb54c73d6056";
+const DEFAULT_USER_ID = "9373c649-8db3-41f6-8f93-4b864839e78a";
 
 function getTenantId(): string {
   if (typeof window !== "undefined") {

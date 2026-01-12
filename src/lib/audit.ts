@@ -203,6 +203,9 @@ export type AuditAction =
   | "performance_cycle_deleted"
   | "performance_review_created"
   | "performance_review_updated"
+  | "performance_review_deleted"
+  | "performance_review_acknowledged"
+  | "performance_review_ai_generated"
   | "performance_goal_created"
   | "performance_goal_updated"
   // HR Documents

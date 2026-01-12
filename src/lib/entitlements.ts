@@ -46,22 +46,49 @@ export interface TenantSubscription {
 
 /**
  * Get the current subscription for a tenant
+ * In development, returns a mock pro subscription if the table doesn't exist
  */
 export async function getTenantSubscription(
   tenantId: string
 ): Promise<TenantSubscription | null> {
-  const [sub] = await db
-    .select()
-    .from(tenantSubscriptions)
-    .where(
-      and(
-        eq(tenantSubscriptions.tenantId, tenantId),
-        eq(tenantSubscriptions.isCurrent, true)
+  try {
+    const [sub] = await db
+      .select()
+      .from(tenantSubscriptions)
+      .where(
+        and(
+          eq(tenantSubscriptions.tenantId, tenantId),
+          eq(tenantSubscriptions.isCurrent, true)
+        )
       )
-    )
-    .limit(1);
+      .limit(1);
 
-  return sub || null;
+    return sub || null;
+  } catch (error) {
+    // In development, if table doesn't exist, return mock pro subscription
+    if (process.env.NODE_ENV === "development") {
+      console.warn("tenant_subscriptions table not found, using mock subscription");
+      const now = new Date();
+      const futureDate = new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+      return {
+        id: "mock-subscription",
+        tenantId,
+        planCode: "pro",
+        status: "active",
+        isCurrent: true,
+        startedAt: now,
+        currentPeriodStart: now,
+        currentPeriodEnd: futureDate,
+        endedAt: null,
+        stripeCustomerId: null,
+        stripeSubscriptionId: null,
+        cancelAtPeriodEnd: false,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }
+    throw error;
+  }
 }
 
 /**

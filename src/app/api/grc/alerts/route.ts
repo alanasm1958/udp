@@ -1,13 +1,14 @@
 /**
  * /api/grc/alerts
  *
- * GET: Generate alerts based on deterministic business rules
+ * GET: Generate alerts based on deterministic business rules + stored GRC alerts
  *
  * Alert types:
  * - ar_aging: Overdue AR invoices (30/60/90 days)
  * - ap_due: Upcoming/overdue AP invoices
  * - low_inventory: Products below reorder threshold
  * - fulfillment_pending: Orders awaiting fulfillment
+ * - compliance: GRC compliance alerts from requirements
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -21,16 +22,18 @@ import {
   inventoryBalances,
   products,
   parties,
+  grcAlerts,
+  grcRequirements,
 } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 
 export interface Alert {
   id: string;
-  type: "ar_aging" | "ap_due" | "low_inventory" | "fulfillment_pending";
+  type: "ar_aging" | "ap_due" | "low_inventory" | "fulfillment_pending" | "compliance";
   severity: "high" | "medium" | "low";
   title: string;
   description: string;
-  domain: "finance" | "inventory" | "sales" | "procurement";
+  domain: "finance" | "inventory" | "sales" | "procurement" | "grc";
   createdAt: string;
   metadata: Record<string, unknown>;
   actions: {
@@ -38,6 +41,11 @@ export interface Alert {
     createTask?: boolean;
     createCard?: boolean;
   };
+  // GRC-specific fields
+  requirementId?: string;
+  requirementTitle?: string;
+  alertType?: string;
+  status?: "active" | "resolved";
 }
 
 function getDaysSince(dateStr: string): number {
@@ -457,6 +465,64 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           },
         });
       }
+    }
+
+    // === GRC Compliance Alerts ===
+    // Get stored alerts from grcAlerts table (linked to requirements)
+    const { searchParams } = new URL(req.url);
+    const statusFilter = searchParams.get("status");
+
+    const grcAlertsConditions = [eq(grcAlerts.tenantId, tenantId)];
+    if (statusFilter) {
+      grcAlertsConditions.push(eq(grcAlerts.status, statusFilter as "active" | "resolved"));
+    }
+
+    const storedAlerts = await db
+      .select({
+        id: grcAlerts.id,
+        requirementId: grcAlerts.requirementId,
+        requirementTitle: grcRequirements.title,
+        title: grcAlerts.title,
+        message: grcAlerts.message,
+        alertType: grcAlerts.alertType,
+        severity: grcAlerts.severity,
+        status: grcAlerts.status,
+        createdAt: grcAlerts.createdAt,
+      })
+      .from(grcAlerts)
+      .leftJoin(grcRequirements, eq(grcAlerts.requirementId, grcRequirements.id))
+      .where(and(...grcAlertsConditions))
+      .orderBy(desc(grcAlerts.createdAt))
+      .limit(100);
+
+    for (const alert of storedAlerts) {
+      const severityMap: Record<string, "high" | "medium" | "low"> = {
+        critical: "high",
+        warning: "medium",
+        info: "low",
+      };
+
+      alerts.push({
+        id: alert.id,
+        type: "compliance",
+        severity: severityMap[alert.severity] || "medium",
+        title: alert.title,
+        description: alert.message || "",
+        domain: "grc",
+        createdAt: alert.createdAt.toISOString(),
+        metadata: {
+          alertType: alert.alertType,
+        },
+        actions: {
+          plannerUrl: alert.requirementId ? `/grc/requirements/${alert.requirementId}` : "/grc",
+          createTask: true,
+          createCard: true,
+        },
+        requirementId: alert.requirementId || undefined,
+        requirementTitle: alert.requirementTitle || undefined,
+        alertType: alert.alertType || undefined,
+        status: alert.status,
+      });
     }
 
     // Sort alerts by severity

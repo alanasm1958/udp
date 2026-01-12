@@ -8,9 +8,11 @@ import {
   GlassTable,
   SkeletonTable,
   SlideOver,
+  useToast,
 } from "@/components/ui/glass";
 import { formatDate } from "@/lib/http";
 import { PerformanceCycleWizard } from "./PerformanceCycleWizard";
+import { PerformanceReviewWizard } from "./PerformanceReviewWizard";
 
 /* =============================================================================
    TYPES
@@ -39,6 +41,25 @@ interface PerformanceReview {
   cycleDueDate: string;
   status: string;
   overallRating?: number | null;
+}
+
+interface PerformanceReviewV2 {
+  id: string;
+  personId: string;
+  employeeName: string;
+  periodType: string;
+  periodStart: string;
+  periodEnd: string;
+  status: string;
+  visibility: string;
+  aiOutcomeCategory: string | null;
+  createdAt: string;
+}
+
+interface Employee {
+  id: string;
+  personId: string;
+  personName: string;
 }
 
 /* =============================================================================
@@ -81,6 +102,16 @@ const Icons = {
       <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
     </svg>
   ),
+  sparkles: (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" />
+    </svg>
+  ),
+  clipboard: (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 002.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 00-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75 2.25 2.25 0 00-.1-.664m-5.8 0A2.251 2.251 0 0113.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25z" />
+    </svg>
+  ),
 };
 
 /* =============================================================================
@@ -114,6 +145,36 @@ const frequencyLabels: Record<string, string> = {
   semi_annual: "Semi-Annual",
   annual: "Annual",
   custom: "Custom",
+};
+
+// V2 Review status helpers
+const reviewV2StatusColors: Record<string, "default" | "info" | "warning" | "success" | "danger"> = {
+  draft: "default",
+  completed: "info",
+  acknowledged: "success",
+};
+
+const reviewV2StatusLabels: Record<string, string> = {
+  draft: "Draft",
+  completed: "Completed",
+  acknowledged: "Acknowledged",
+};
+
+const aiOutcomeCategoryColors: Record<string, "success" | "info" | "warning" | "danger" | "default"> = {
+  outstanding_contribution: "success",
+  strong_performance: "success",
+  solid_on_track: "info",
+  below_expectations: "warning",
+  critical_concerns: "danger",
+};
+
+const periodTypeLabels: Record<string, string> = {
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  annual: "Annual",
+  probation: "Probation",
+  project: "Project",
+  other: "Other",
 };
 
 /* =============================================================================
@@ -290,19 +351,30 @@ function CycleDetailDrawer({ cycle, open, onClose, onRefresh }: CycleDrawerProps
    MAIN COMPONENT
    ============================================================================= */
 
-export function PerformanceTab() {
+interface PerformanceTabProps {
+  onRecordActivity?: () => void;
+}
+
+export function PerformanceTab({ onRecordActivity }: PerformanceTabProps) {
   const [cycles, setCycles] = React.useState<PerformanceCycle[]>([]);
   const [pendingReviews, setPendingReviews] = React.useState<PerformanceReview[]>([]);
+  const [reviewsV2, setReviewsV2] = React.useState<PerformanceReviewV2[]>([]);
+  const [employees, setEmployees] = React.useState<Employee[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [showWizard, setShowWizard] = React.useState(false);
+  const [showReviewWizard, setShowReviewWizard] = React.useState(false);
   const [selectedCycle, setSelectedCycle] = React.useState<PerformanceCycle | null>(null);
+  const [activeView, setActiveView] = React.useState<"cycles" | "reviews">("reviews");
+  const { addToast } = useToast();
 
-  const loadCycles = React.useCallback(async () => {
+  const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [cyclesRes, reviewsRes] = await Promise.all([
+      const [cyclesRes, reviewsRes, reviewsV2Res, employeesRes] = await Promise.all([
         fetch("/api/people/performance-cycles"),
         fetch("/api/people/performance-reviews?status=not_started"),
+        fetch("/api/people/performance/reviews"),
+        fetch("/api/payroll/employees"),
       ]);
 
       if (cyclesRes.ok) {
@@ -314,15 +386,32 @@ export function PerformanceTab() {
         const data = await reviewsRes.json();
         setPendingReviews(data.items || []);
       }
+
+      if (reviewsV2Res.ok) {
+        const data = await reviewsV2Res.json();
+        setReviewsV2(data.reviews || []);
+      }
+
+      if (employeesRes.ok) {
+        const data = await employeesRes.json();
+        // Map employees to the format expected by the wizard
+        const mappedEmployees = (data.employees || []).map((emp: { id: string; personId: string; personFullName?: string }) => ({
+          id: emp.id,
+          personId: emp.personId,
+          personName: emp.personFullName || "Unknown",
+        }));
+        setEmployees(mappedEmployees);
+      }
     } catch (error) {
       console.error("Failed to load performance data:", error);
+      addToast("error", "Failed to load performance data");
     }
     setLoading(false);
-  }, []);
+  }, [addToast]);
 
   React.useEffect(() => {
-    loadCycles();
-  }, [loadCycles]);
+    loadData();
+  }, [loadData]);
 
   const handleRowClick = (index: number) => {
     setSelectedCycle(cycles[index]);
@@ -330,11 +419,21 @@ export function PerformanceTab() {
 
   const handleCycleCreated = () => {
     setShowWizard(false);
-    loadCycles();
+    loadData();
+    onRecordActivity?.();
+  };
+
+  const handleReviewCreated = () => {
+    setShowReviewWizard(false);
+    loadData();
+    onRecordActivity?.();
+    addToast("success", "Performance review created successfully");
   };
 
   // Stats
   const activeCycles = cycles.filter(c => c.status === "active").length;
+  const draftReviews = reviewsV2.filter(r => r.status === "draft").length;
+  const completedReviews = reviewsV2.filter(r => r.status === "completed" || r.status === "acknowledged").length;
   const completedThisYear = cycles.filter(c => {
     const year = new Date().getFullYear();
     return c.status === "completed" && new Date(c.periodEnd).getFullYear() === year;
@@ -346,24 +445,70 @@ export function PerformanceTab() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-white">Performance Management</h2>
-          <p className="text-sm text-white/50">Create review cycles and track employee performance</p>
+          <p className="text-sm text-white/50">Create reviews and track employee performance</p>
         </div>
         <div className="flex items-center gap-2">
-          <GlassButton variant="ghost" onClick={loadCycles} disabled={loading}>
+          <GlassButton variant="ghost" onClick={loadData} disabled={loading}>
             {Icons.refresh}
           </GlassButton>
-          <GlassButton variant="primary" onClick={() => setShowWizard(true)}>
+          <GlassButton variant="primary" onClick={() => setShowReviewWizard(true)}>
+            {Icons.sparkles}
+            <span className="ml-2">New Review</span>
+          </GlassButton>
+          <GlassButton variant="default" onClick={() => setShowWizard(true)}>
             {Icons.plus}
             <span className="ml-2">Create Cycle</span>
           </GlassButton>
         </div>
       </div>
 
+      {/* View Toggle */}
+      <div className="flex gap-2">
+        <GlassButton
+          variant={activeView === "reviews" ? "primary" : "ghost"}
+          onClick={() => setActiveView("reviews")}
+        >
+          {Icons.clipboard}
+          <span className="ml-2">Reviews ({reviewsV2.length})</span>
+        </GlassButton>
+        <GlassButton
+          variant={activeView === "cycles" ? "primary" : "ghost"}
+          onClick={() => setActiveView("cycles")}
+        >
+          {Icons.chart}
+          <span className="ml-2">Cycles ({cycles.length})</span>
+        </GlassButton>
+      </div>
+
       {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <GlassCard padding="sm">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-indigo-500/20 text-indigo-400">
+              {Icons.sparkles}
+            </div>
+            <div>
+              <div className="text-xs text-white/50 uppercase">Draft Reviews</div>
+              <div className="text-xl font-semibold text-white">{draftReviews}</div>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
+              {Icons.check}
+            </div>
+            <div>
+              <div className="text-xs text-white/50 uppercase">Completed Reviews</div>
+              <div className="text-xl font-semibold text-white">{completedReviews}</div>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard padding="sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-cyan-500/20 text-cyan-400">
               {Icons.chart}
             </div>
             <div>
@@ -379,82 +524,151 @@ export function PerformanceTab() {
               {Icons.clock}
             </div>
             <div>
-              <div className="text-xs text-white/50 uppercase">Pending Reviews</div>
+              <div className="text-xs text-white/50 uppercase">Pending (Legacy)</div>
               <div className="text-xl font-semibold text-white">{pendingReviews.length}</div>
-            </div>
-          </div>
-        </GlassCard>
-
-        <GlassCard padding="sm">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-              {Icons.check}
-            </div>
-            <div>
-              <div className="text-xs text-white/50 uppercase">Completed (Year)</div>
-              <div className="text-xl font-semibold text-white">{completedThisYear}</div>
             </div>
           </div>
         </GlassCard>
       </div>
 
-      {/* Performance Cycles Table */}
-      <GlassCard padding="none">
-        {loading ? (
-          <div className="p-6">
-            <SkeletonTable rows={3} columns={5} />
-          </div>
-        ) : cycles.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
-              {Icons.star}
+      {/* Reviews V2 Table */}
+      {activeView === "reviews" && (
+        <GlassCard padding="none">
+          {loading ? (
+            <div className="p-6">
+              <SkeletonTable rows={3} columns={5} />
             </div>
-            <p className="text-white/70 font-medium mb-2">No performance cycles</p>
-            <p className="text-sm text-white/40 mb-6 max-w-md mx-auto">
-              Create a performance cycle to track reviews for your team.
-              Set up quarterly, semi-annual, or annual reviews.
-            </p>
-            <GlassButton variant="primary" onClick={() => setShowWizard(true)}>
-              {Icons.plus}
-              <span className="ml-2">Create First Cycle</span>
-            </GlassButton>
-          </div>
-        ) : (
-          <GlassTable
-            headers={["Cycle", "Period", "Due Date", "Progress", "Status"]}
-            rows={cycles.map((cycle) => [
-              // Cycle name
-              <div key="name">
-                <div className="text-sm font-medium text-white">{cycle.name}</div>
-                <div className="text-xs text-white/40">{frequencyLabels[cycle.frequency] || cycle.frequency}</div>
-              </div>,
-              // Period
-              <span key="period" className="text-white/70">
-                {formatDate(cycle.periodStart)} - {formatDate(cycle.periodEnd)}
-              </span>,
-              // Due Date
-              <span key="due" className="text-white/70">{formatDate(cycle.dueDate)}</span>,
-              // Progress
-              <div key="progress" className="flex items-center gap-2">
-                <div className="w-24 h-2 rounded-full bg-white/10 overflow-hidden">
-                  <div
-                    className="h-full bg-indigo-500 rounded-full transition-all"
-                    style={{ width: `${cycle.reviewCount > 0 ? (cycle.completedReviewCount / cycle.reviewCount) * 100 : 0}%` }}
-                  />
-                </div>
-                <span className="text-xs text-white/50">
-                  {cycle.completedReviewCount}/{cycle.reviewCount}
-                </span>
-              </div>,
-              // Status
-              <GlassBadge key="status" variant={statusColors[cycle.status] || "default"}>
-                {statusLabels[cycle.status] || cycle.status}
-              </GlassBadge>,
-            ])}
-            emptyMessage="No performance cycles found"
-          />
-        )}
-      </GlassCard>
+          ) : reviewsV2.length === 0 ? (
+            <div className="text-center py-16">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                {Icons.sparkles}
+              </div>
+              <p className="text-white/70 font-medium mb-2">No performance reviews</p>
+              <p className="text-sm text-white/40 mb-6 max-w-md mx-auto">
+                Create a guided performance review with AI-powered outcome analysis.
+              </p>
+              <GlassButton variant="primary" onClick={() => setShowReviewWizard(true)}>
+                {Icons.sparkles}
+                <span className="ml-2">Create First Review</span>
+              </GlassButton>
+            </div>
+          ) : (
+            <GlassTable
+              headers={["Employee", "Period", "Type", "AI Outcome", "Status"]}
+              rows={reviewsV2.map((review) => [
+                // Employee
+                <div key="employee">
+                  <div className="text-sm font-medium text-white">{review.employeeName}</div>
+                  <div className="text-xs text-white/40">{formatDate(review.createdAt)}</div>
+                </div>,
+                // Period
+                <span key="period" className="text-white/70">
+                  {formatDate(review.periodStart)} - {formatDate(review.periodEnd)}
+                </span>,
+                // Type
+                <span key="type" className="text-white/70">
+                  {periodTypeLabels[review.periodType] || review.periodType}
+                </span>,
+                // AI Outcome
+                review.aiOutcomeCategory ? (
+                  <GlassBadge
+                    key="outcome"
+                    variant={aiOutcomeCategoryColors[review.aiOutcomeCategory] || "default"}
+                  >
+                    {review.aiOutcomeCategory.replace(/_/g, " ")}
+                  </GlassBadge>
+                ) : (
+                  <span key="outcome" className="text-white/40 text-sm">Not generated</span>
+                ),
+                // Status
+                <GlassBadge key="status" variant={reviewV2StatusColors[review.status] || "default"}>
+                  {reviewV2StatusLabels[review.status] || review.status}
+                </GlassBadge>,
+              ])}
+              emptyMessage="No performance reviews found"
+            />
+          )}
+        </GlassCard>
+      )}
+
+      {/* Performance Cycles Table */}
+      {activeView === "cycles" && (
+        <GlassCard padding="none">
+          {loading ? (
+            <div className="p-6">
+              <SkeletonTable rows={3} columns={5} />
+            </div>
+          ) : cycles.length === 0 ? (
+            <div className="text-center py-16">
+              <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-indigo-500/10 flex items-center justify-center text-indigo-400">
+                {Icons.star}
+              </div>
+              <p className="text-white/70 font-medium mb-2">No performance cycles</p>
+              <p className="text-sm text-white/40 mb-6 max-w-md mx-auto">
+                Create a performance cycle to track reviews for your team.
+                Set up quarterly, semi-annual, or annual reviews.
+              </p>
+              <GlassButton variant="primary" onClick={() => setShowWizard(true)}>
+                {Icons.plus}
+                <span className="ml-2">Create First Cycle</span>
+              </GlassButton>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[600px]">
+                <thead>
+                  <tr className="border-b border-white/10">
+                    {["Cycle", "Period", "Due Date", "Progress", "Status"].map((header, i) => (
+                      <th
+                        key={i}
+                        className="px-4 py-3 text-xs font-semibold text-white/60 uppercase tracking-wider text-left"
+                      >
+                        {header}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cycles.map((cycle, index) => (
+                    <tr
+                      key={cycle.id}
+                      onClick={() => handleRowClick(index)}
+                      className="border-b border-white/5 hover:bg-white/5 transition-colors cursor-pointer"
+                    >
+                      <td className="px-4 py-3">
+                        <div className="text-sm font-medium text-white">{cycle.name}</div>
+                        <div className="text-xs text-white/40">{frequencyLabels[cycle.frequency] || cycle.frequency}</div>
+                      </td>
+                      <td className="px-4 py-3 text-white/70">
+                        {formatDate(cycle.periodStart)} - {formatDate(cycle.periodEnd)}
+                      </td>
+                      <td className="px-4 py-3 text-white/70">{formatDate(cycle.dueDate)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-24 h-2 rounded-full bg-white/10 overflow-hidden">
+                            <div
+                              className="h-full bg-indigo-500 rounded-full transition-all"
+                              style={{ width: `${cycle.reviewCount > 0 ? (cycle.completedReviewCount / cycle.reviewCount) * 100 : 0}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-white/50">
+                            {cycle.completedReviewCount}/{cycle.reviewCount}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <GlassBadge variant={statusColors[cycle.status] || "default"}>
+                          {statusLabels[cycle.status] || cycle.status}
+                        </GlassBadge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </GlassCard>
+      )}
 
       {/* Pending Reviews Section */}
       {pendingReviews.length > 0 && (
@@ -495,12 +709,20 @@ export function PerformanceTab() {
         onCreated={handleCycleCreated}
       />
 
+      {/* Performance Review Wizard (V2) */}
+      <PerformanceReviewWizard
+        open={showReviewWizard}
+        employees={employees}
+        onClose={() => setShowReviewWizard(false)}
+        onComplete={handleReviewCreated}
+      />
+
       {/* Cycle Detail Drawer */}
       <CycleDetailDrawer
         cycle={selectedCycle}
         open={selectedCycle !== null}
         onClose={() => setSelectedCycle(null)}
-        onRefresh={loadCycles}
+        onRefresh={loadData}
       />
     </div>
   );
