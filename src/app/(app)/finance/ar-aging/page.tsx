@@ -14,6 +14,7 @@ import {
   Spinner,
   SkeletonTable,
   useToast,
+  ErrorAlert,
 } from "@/components/ui/glass";
 import { formatCurrency, formatDate, apiGet } from "@/lib/http";
 
@@ -243,48 +244,46 @@ function ARAgingContent() {
 
       {/* Error */}
       {error && (
-        <GlassCard className="!bg-red-500/10 border border-red-500/20">
-          <p className="text-red-400">{error}</p>
-        </GlassCard>
+        <ErrorAlert message={error} onDismiss={() => setError(null)} />
       )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <GlassCard padding="sm">
-          <p className="text-xs text-white/50 uppercase">Current</p>
-          <p className="text-xl font-bold text-emerald-400">
+          <div className="text-xs text-white/50 uppercase">Current</div>
+          <div className="text-xl font-bold text-emerald-400">
             {loading ? <Spinner size="sm" /> : formatCurrency(summary?.current || 0)}
-          </p>
+          </div>
         </GlassCard>
         <GlassCard padding="sm">
-          <p className="text-xs text-white/50 uppercase">1-30 Days</p>
-          <p className="text-xl font-bold text-blue-400">
+          <div className="text-xs text-white/50 uppercase">1-30 Days</div>
+          <div className="text-xl font-bold text-blue-400">
             {loading ? <Spinner size="sm" /> : formatCurrency(summary?.days30 || 0)}
-          </p>
+          </div>
         </GlassCard>
         <GlassCard padding="sm">
-          <p className="text-xs text-white/50 uppercase">31-60 Days</p>
-          <p className="text-xl font-bold text-amber-400">
+          <div className="text-xs text-white/50 uppercase">31-60 Days</div>
+          <div className="text-xl font-bold text-amber-400">
             {loading ? <Spinner size="sm" /> : formatCurrency(summary?.days60 || 0)}
-          </p>
+          </div>
         </GlassCard>
         <GlassCard padding="sm">
-          <p className="text-xs text-white/50 uppercase">61-90 Days</p>
-          <p className="text-xl font-bold text-orange-400">
+          <div className="text-xs text-white/50 uppercase">61-90 Days</div>
+          <div className="text-xl font-bold text-orange-400">
             {loading ? <Spinner size="sm" /> : formatCurrency(summary?.days90 || 0)}
-          </p>
+          </div>
         </GlassCard>
         <GlassCard padding="sm">
-          <p className="text-xs text-white/50 uppercase">Over 90 Days</p>
-          <p className="text-xl font-bold text-red-400">
+          <div className="text-xs text-white/50 uppercase">Over 90 Days</div>
+          <div className="text-xl font-bold text-red-400">
             {loading ? <Spinner size="sm" /> : formatCurrency(summary?.over90 || 0)}
-          </p>
+          </div>
         </GlassCard>
         <GlassCard padding="sm" className="bg-white/5">
-          <p className="text-xs text-white/50 uppercase">Total AR</p>
-          <p className="text-xl font-bold text-white">
+          <div className="text-xs text-white/50 uppercase">Total AR</div>
+          <div className="text-xl font-bold text-white">
             {loading ? <Spinner size="sm" /> : formatCurrency(summary?.total || 0)}
-          </p>
+          </div>
         </GlassCard>
       </div>
 
