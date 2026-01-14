@@ -15,6 +15,7 @@ import {
   useToast,
 } from "@/components/ui/glass";
 import { apiGet, apiPost, apiPut, apiDelete } from "@/lib/http";
+import { ChannelDetailSlideOver } from "./components/ChannelDetailSlideOver";
 
 /* ═══════════════════════════════════════════════════════════════════════════
    TYPES & INTERFACES
@@ -297,6 +298,7 @@ function ChannelCard({
   disconnecting,
   onConnect,
   onDisconnect,
+  onExpand,
 }: {
   channel: Omit<Channel, "connected" | "metrics">;
   connected: boolean;
@@ -304,17 +306,20 @@ function ChannelCard({
   disconnecting?: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
+  onExpand?: () => void;
 }) {
   return (
     <div
       className={`relative overflow-hidden rounded-2xl border backdrop-blur-xl p-4 transition-all duration-200 hover:scale-[1.02] ${
         connected
-          ? "bg-white/10 border-white/20"
+          ? "bg-white/10 border-white/20 cursor-pointer"
           : "bg-white/5 border-white/10 hover:bg-white/8"
       }`}
+      onClick={connected && onExpand ? onExpand : undefined}
     >
       {connected && (
-        <div className="absolute top-3 right-3">
+        <div className="absolute top-3 right-3 flex items-center gap-1.5">
+          <span className="text-[10px] text-emerald-400 font-medium uppercase tracking-wider">Live</span>
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
         </div>
       )}
@@ -349,17 +354,38 @@ function ChannelCard({
             <p className="text-sm font-semibold text-white">{metrics.conversions}</p>
           </div>
         </div>
+      ) : connected ? (
+        <div className="py-2 text-center mb-3">
+          <p className="text-xs text-white/40">Click to view analytics</p>
+        </div>
       ) : null}
 
       {connected ? (
         <div className="flex gap-2">
           <button
-            onClick={onDisconnect}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDisconnect();
+            }}
             disabled={disconnecting}
             className="flex-1 py-2 rounded-xl text-xs font-medium transition-all bg-red-500/20 text-red-300 hover:bg-red-500/30 disabled:opacity-50"
           >
             {disconnecting ? "..." : "Disconnect"}
           </button>
+          {onExpand && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onExpand();
+              }}
+              className="flex-1 py-2 rounded-xl text-xs font-medium transition-all bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 flex items-center justify-center gap-1"
+            >
+              <span>View</span>
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+          )}
         </div>
       ) : (
         <button
@@ -1468,26 +1494,39 @@ function ChannelConnectionModal({
     setLoading(true);
 
     try {
-      const response = await apiPost<{
-        success: boolean;
+      // Use direct fetch to handle 400 responses with needsConfiguration flag
+      const tenantId = typeof window !== "undefined" ? localStorage.getItem("tenantId") || "19ff1b5c-3d71-4f83-a622-cb54c73d6056" : "";
+      const userId = typeof window !== "undefined" ? localStorage.getItem("userId") || "9373c649-8db3-41f6-8f93-4b864839e78a" : "";
+
+      const fetchResponse = await fetch(`/api/marketing/channels/oauth/${channel.id}/connect`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-tenant-id": tenantId,
+          "x-user-id": userId,
+        },
+        body: JSON.stringify(
+          authMethod === "api_key"
+            ? {
+                apiKey: apiKeyValues.apiKey,
+                additionalConfig: {
+                  accountSid: apiKeyValues.accountSid,
+                  phoneNumber: apiKeyValues.phoneNumber,
+                  phoneNumberId: apiKeyValues.phoneNumberId,
+                },
+              }
+            : {}
+        ),
+      });
+
+      const response = await fetchResponse.json() as {
+        success?: boolean;
         authUrl?: string;
         channelId?: string;
         error?: string;
         needsConfiguration?: boolean;
         provider?: string;
-      }>(
-        `/api/marketing/channels/oauth/${channel.id}/connect`,
-        authMethod === "api_key"
-          ? {
-              apiKey: apiKeyValues.apiKey,
-              additionalConfig: {
-                accountSid: apiKeyValues.accountSid,
-                phoneNumber: apiKeyValues.phoneNumber,
-                phoneNumberId: apiKeyValues.phoneNumberId,
-              },
-            }
-          : {}
-      );
+      };
 
       if (response.error) {
         if (response.needsConfiguration && response.provider) {
@@ -1800,6 +1839,7 @@ function MarketingPageContent() {
 
   const [showWizard, setShowWizard] = React.useState(false);
   const [connectingChannel, setConnectingChannel] = React.useState<Omit<Channel, "connected" | "metrics"> | null>(null);
+  const [expandedChannel, setExpandedChannel] = React.useState<Omit<Channel, "connected" | "metrics"> | null>(null);
 
   // Fetch connected channels from API
   const fetchConnectedChannels = React.useCallback(async () => {
@@ -2010,6 +2050,7 @@ function MarketingPageContent() {
                 disconnecting={disconnecting === channel.id}
                 onConnect={() => setConnectingChannel(channel)}
                 onDisconnect={() => handleDisconnectChannel(channel.id)}
+                onExpand={connectedChannels.has(channel.id) ? () => setExpandedChannel(channel) : undefined}
               />
             ))}
           </div>
@@ -2078,6 +2119,22 @@ function MarketingPageContent() {
         onClose={() => setConnectingChannel(null)}
         onConnect={handleConnectChannel}
       />
+
+      {/* Channel Detail SlideOver */}
+      {expandedChannel && channelDbIds.get(expandedChannel.id) && (
+        <ChannelDetailSlideOver
+          open={!!expandedChannel}
+          onClose={() => setExpandedChannel(null)}
+          channelId={channelDbIds.get(expandedChannel.id)!}
+          channelName={expandedChannel.name}
+          channelColor={expandedChannel.color}
+          channelIcon={expandedChannel.icon}
+          onDisconnect={() => {
+            handleDisconnectChannel(expandedChannel.id);
+            setExpandedChannel(null);
+          }}
+        />
+      )}
     </div>
   );
 }

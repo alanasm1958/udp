@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { GlassCard, GlassButton, GlassInput, EmptyState, useToast } from "@/components/ui/glass";
-import { Briefcase, ArrowLeft, Search, Mail, Phone, Star, DollarSign } from "lucide-react";
+import { GlassCard, GlassButton, GlassInput, GlassBadge, PageHeader, Spinner, EmptyState, useToast } from "@/components/ui/glass";
+import { Briefcase, Mail, Phone, Star } from "lucide-react";
 
 interface Contractor {
   id: string;
@@ -54,54 +54,46 @@ export default function ContractorsPage() {
       (c.jobTitle && c.jobTitle.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  const getStatusColor = (status: string) => {
+  const getStatusVariant = (status: string): "success" | "warning" | "danger" | "default" => {
     switch (status) {
       case "active":
-        return "bg-green-500/20 text-green-400";
+        return "success";
       case "on_leave":
-        return "bg-yellow-500/20 text-yellow-400";
+        return "warning";
       case "terminated":
-        return "bg-red-500/20 text-red-400";
+        return "danger";
       default:
-        return "bg-white/20 text-white/60";
+        return "default";
     }
   };
 
   return (
-    <div className="min-h-screen p-8 space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <GlassButton onClick={() => router.push("/operations")} variant="ghost" size="sm">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </GlassButton>
-          <div>
-            <h1 className="text-3xl font-bold">Contractors</h1>
-            <p className="text-white/60">Manage contractor relationships and freelancers</p>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Contractors"
+        description="Manage contractor relationships and freelancers"
+      />
 
       {/* Search */}
-      <div className="flex gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/40" />
-          <GlassInput
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by name, email, or job title..."
-            className="pl-10"
-          />
+      <GlassCard padding="sm">
+        <div className="flex gap-4 items-center">
+          <div className="flex-1 max-w-md">
+            <GlassInput
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by name, email, or job title..."
+            />
+          </div>
+          <span className="text-sm text-white/40">{filteredContractors.length} contractors</span>
         </div>
-      </div>
+      </GlassCard>
 
       {/* Contractors List */}
-      <GlassCard>
+      <GlassCard padding="none">
         {isLoading ? (
           <div className="p-8 text-center">
-            <div className="animate-spin w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full mx-auto" />
-            <p className="text-white/40 mt-4">Loading contractors...</p>
+            <Spinner size="md" />
+            <p className="text-white/40 text-sm mt-4">Loading contractors...</p>
           </div>
         ) : filteredContractors.length === 0 ? (
           <EmptyState
@@ -132,9 +124,9 @@ export default function ContractorsPage() {
                             </span>
                           )}
                         </h3>
-                        <span className={`text-xs px-2 py-1 rounded ${getStatusColor(contractor.status)}`}>
+                        <GlassBadge variant={getStatusVariant(contractor.status)}>
                           {contractor.status.replace("_", " ")}
-                        </span>
+                        </GlassBadge>
                       </div>
                       {contractor.jobTitle && (
                         <p className="text-sm text-white/60 mb-2">

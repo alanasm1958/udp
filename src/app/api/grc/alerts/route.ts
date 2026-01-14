@@ -22,7 +22,7 @@ import {
   inventoryBalances,
   products,
   parties,
-  grcAlerts,
+  masterAlerts,
   grcRequirements,
 } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
@@ -468,31 +468,34 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
 
     // === GRC Compliance Alerts ===
-    // Get stored alerts from grcAlerts table (linked to requirements)
+    // Get stored alerts from master_alerts table (domain='grc', category='compliance')
     const { searchParams } = new URL(req.url);
     const statusFilter = searchParams.get("status");
 
-    const grcAlertsConditions = [eq(grcAlerts.tenantId, tenantId)];
+    const grcAlertsConditions = [
+      eq(masterAlerts.tenantId, tenantId),
+      eq(masterAlerts.domain, "grc"),
+    ];
     if (statusFilter) {
-      grcAlertsConditions.push(eq(grcAlerts.status, statusFilter as "active" | "resolved"));
+      grcAlertsConditions.push(eq(masterAlerts.status, statusFilter as typeof masterAlerts.status.enumValues[number]));
     }
 
     const storedAlerts = await db
       .select({
-        id: grcAlerts.id,
-        requirementId: grcAlerts.requirementId,
+        id: masterAlerts.id,
+        requirementId: masterAlerts.requirementId,
         requirementTitle: grcRequirements.title,
-        title: grcAlerts.title,
-        message: grcAlerts.message,
-        alertType: grcAlerts.alertType,
-        severity: grcAlerts.severity,
-        status: grcAlerts.status,
-        createdAt: grcAlerts.createdAt,
+        title: masterAlerts.title,
+        message: masterAlerts.message,
+        alertType: masterAlerts.alertType,
+        severity: masterAlerts.severity,
+        status: masterAlerts.status,
+        createdAt: masterAlerts.createdAt,
       })
-      .from(grcAlerts)
-      .leftJoin(grcRequirements, eq(grcAlerts.requirementId, grcRequirements.id))
+      .from(masterAlerts)
+      .leftJoin(grcRequirements, eq(masterAlerts.requirementId, grcRequirements.id))
       .where(and(...grcAlertsConditions))
-      .orderBy(desc(grcAlerts.createdAt))
+      .orderBy(desc(masterAlerts.createdAt))
       .limit(100);
 
     for (const alert of storedAlerts) {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { GlassCard, GlassButton } from "@/components/ui/glass";
+import { GlassCard, GlassButton, GlassBadge } from "@/components/ui/glass";
 import { Users, DollarSign, Award, AlertCircle, Plus, TrendingUp, Calendar } from "lucide-react";
 import RecordActivityDrawer from "@/components/hr/RecordActivityDrawer";
 
@@ -94,28 +94,27 @@ export default function HRPeoplePage() {
   ];
 
   return (
-    <div className="min-h-screen p-8 space-y-8">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex justify-between items-start">
         <div>
-          <h1 className="text-4xl font-bold mb-2">HR & People</h1>
-          <p className="text-white/60">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">HR & People</h1>
+          <p className="text-sm text-white/50 mt-1">
             Manage your team, payroll, and performance reviews
           </p>
         </div>
         <GlassButton
           onClick={() => setShowRecordActivity(true)}
           variant="primary"
-          size="lg"
         >
           <Plus className="w-5 h-5 mr-2" />
-          Record HR & People Activity
+          Record Activity
         </GlassButton>
       </div>
 
       {/* Snapshot Section - Analytics Cards */}
       <div>
-        <h2 className="text-xl font-semibold mb-4">Snapshot</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">Snapshot</h2>
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[1, 2, 3, 4].map((i) => (
@@ -195,17 +194,17 @@ export default function HRPeoplePage() {
                           <p className="text-sm text-white/60 mt-1">{todo.description}</p>
                         )}
                       </div>
-                      <span
-                        className={`text-xs px-2 py-1 rounded ${
+                      <GlassBadge
+                        variant={
                           todo.priority === "high"
-                            ? "bg-red-500/20 text-red-400"
+                            ? "danger"
                             : todo.priority === "medium"
-                            ? "bg-yellow-500/20 text-yellow-400"
-                            : "bg-blue-500/20 text-blue-400"
-                        }`}
+                            ? "warning"
+                            : "info"
+                        }
                       >
                         {todo.priority}
-                      </span>
+                      </GlassBadge>
                     </div>
                     {todo.due_at && (
                       <p className="text-xs text-white/40 mt-2">
@@ -274,7 +273,7 @@ export default function HRPeoplePage() {
 
       {/* Bottom Section - Access Cards */}
       <div>
-        <h2 className="text-xl font-semibold mb-4">Quick Access</h2>
+        <h2 className="text-lg font-semibold text-white mb-4">Quick Access</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {accessCards.map((card, index) => (
             <GlassCard

@@ -2,11 +2,12 @@
  * /api/people/alerts
  *
  * HR-specific alerts and tasks endpoint
+ * Now uses master_alerts and master_tasks tables with domain='hr'
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { alerts, tasks } from "@/db/schema";
+import { masterAlerts, masterTasks } from "@/db/schema";
 import { eq, and, desc, sql, or } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -29,35 +30,36 @@ export async function GET(request: NextRequest) {
 
     // Get HR alerts
     const alertConditions = [
-      eq(alerts.tenantId, tenantId),
-      eq(alerts.domain, "hr"),
+      eq(masterAlerts.tenantId, tenantId),
+      eq(masterAlerts.domain, "hr"),
     ];
 
     if (status) {
-      alertConditions.push(eq(alerts.status, status));
+      alertConditions.push(eq(masterAlerts.status, status as typeof masterAlerts.status.enumValues[number]));
     } else {
-      alertConditions.push(or(eq(alerts.status, "active"), eq(alerts.status, "acknowledged"))!);
+      alertConditions.push(or(eq(masterAlerts.status, "active"), eq(masterAlerts.status, "acknowledged"))!);
     }
 
     if (severity) {
-      alertConditions.push(eq(alerts.severity, severity));
+      alertConditions.push(eq(masterAlerts.severity, severity as typeof masterAlerts.severity.enumValues[number]));
     }
 
     const hrAlerts = await db
       .select({
-        id: alerts.id,
-        type: alerts.type,
-        severity: alerts.severity,
-        message: alerts.message,
-        status: alerts.status,
-        source: alerts.source,
-        relatedEntityType: alerts.relatedEntityType,
-        relatedEntityId: alerts.relatedEntityId,
-        createdAt: alerts.createdAt,
+        id: masterAlerts.id,
+        type: masterAlerts.alertType,
+        title: masterAlerts.title,
+        severity: masterAlerts.severity,
+        message: masterAlerts.message,
+        status: masterAlerts.status,
+        source: masterAlerts.source,
+        relatedEntityType: masterAlerts.relatedEntityType,
+        relatedEntityId: masterAlerts.relatedEntityId,
+        createdAt: masterAlerts.createdAt,
       })
-      .from(alerts)
+      .from(masterAlerts)
       .where(and(...alertConditions))
-      .orderBy(desc(alerts.createdAt))
+      .orderBy(desc(masterAlerts.createdAt))
       .limit(limit);
 
     // Get HR tasks if requested
@@ -75,29 +77,29 @@ export async function GET(request: NextRequest) {
 
     if (includeTasksBool) {
       const taskConditions = [
-        eq(tasks.tenantId, tenantId),
-        eq(tasks.domain, "hr"),
+        eq(masterTasks.tenantId, tenantId),
+        eq(masterTasks.domain, "hr"),
       ];
 
       if (status === "active" || !status) {
-        taskConditions.push(eq(tasks.status, "open"));
+        taskConditions.push(eq(masterTasks.status, "open"));
       }
 
       hrTasks = await db
         .select({
-          id: tasks.id,
-          title: tasks.title,
-          description: tasks.description,
-          status: tasks.status,
-          priority: tasks.priority,
-          dueAt: tasks.dueAt,
-          relatedEntityType: tasks.relatedEntityType,
-          relatedEntityId: tasks.relatedEntityId,
-          createdAt: tasks.createdAt,
+          id: masterTasks.id,
+          title: masterTasks.title,
+          description: masterTasks.description,
+          status: masterTasks.status,
+          priority: masterTasks.priority,
+          dueAt: masterTasks.dueAt,
+          relatedEntityType: masterTasks.relatedEntityType,
+          relatedEntityId: masterTasks.relatedEntityId,
+          createdAt: masterTasks.createdAt,
         })
-        .from(tasks)
+        .from(masterTasks)
         .where(and(...taskConditions))
-        .orderBy(desc(tasks.createdAt))
+        .orderBy(desc(masterTasks.createdAt))
         .limit(limit);
     }
 
@@ -106,7 +108,7 @@ export async function GET(request: NextRequest) {
       SELECT
         severity,
         COUNT(*) as count
-      FROM alerts
+      FROM master_alerts
       WHERE tenant_id = ${tenantId}
         AND domain = 'hr'
         AND status IN ('active', 'acknowledged')
@@ -117,7 +119,7 @@ export async function GET(request: NextRequest) {
       SELECT
         priority,
         COUNT(*) as count
-      FROM tasks
+      FROM master_tasks
       WHERE tenant_id = ${tenantId}
         AND domain = 'hr'
         AND status = 'open'
@@ -184,11 +186,11 @@ export async function POST(request: NextRequest) {
         AND e.termination_date >= CURRENT_DATE
         AND e.termination_date <= CURRENT_DATE + INTERVAL '30 days'
         AND NOT EXISTS (
-          SELECT 1 FROM alerts a
+          SELECT 1 FROM master_alerts a
           WHERE a.tenant_id = ${tenantId}
             AND a.related_entity_type = 'employee'
             AND a.related_entity_id = e.id
-            AND a.type = 'contract_ending'
+            AND a.alert_type = 'contract_ending'
             AND a.status = 'active'
             AND a.created_at >= CURRENT_DATE - INTERVAL '7 days'
         )
@@ -198,11 +200,13 @@ export async function POST(request: NextRequest) {
       const daysUntil = parseInt(String(row.days_until));
       const severity = daysUntil <= 1 ? "critical" : daysUntil <= 7 ? "warning" : "info";
 
-      await db.insert(alerts).values({
+      await db.insert(masterAlerts).values({
         tenantId,
+        category: "standard",
         domain: "hr",
-        type: "contract_ending",
-        severity,
+        alertType: "contract_ending",
+        title: "Contract Ending",
+        severity: severity as "info" | "warning" | "critical",
         message: `${row.person_name}'s contract ends on ${row.termination_date}. ${daysUntil <= 1 ? 'Immediate action required.' : daysUntil <= 7 ? 'Action needed soon.' : 'Plan ahead.'}`,
         status: "active",
         source: "system",
@@ -233,11 +237,11 @@ export async function POST(request: NextRequest) {
         AND d.expiry_date >= CURRENT_DATE
         AND d.expiry_date <= CURRENT_DATE + INTERVAL '30 days'
         AND NOT EXISTS (
-          SELECT 1 FROM alerts a
+          SELECT 1 FROM master_alerts a
           WHERE a.tenant_id = ${tenantId}
             AND a.related_entity_type = 'document'
             AND a.related_entity_id = d.id
-            AND a.type = 'document_expiring'
+            AND a.alert_type = 'document_expiring'
             AND a.status = 'active'
             AND a.created_at >= CURRENT_DATE - INTERVAL '7 days'
         )
@@ -247,11 +251,13 @@ export async function POST(request: NextRequest) {
       const daysUntil = parseInt(String(row.days_until));
       const severity = daysUntil <= 7 ? "warning" : "info";
 
-      await db.insert(alerts).values({
+      await db.insert(masterAlerts).values({
         tenantId,
+        category: "standard",
         domain: "hr",
-        type: "document_expiring",
-        severity,
+        alertType: "document_expiring",
+        title: "Document Expiring",
+        severity: severity as "info" | "warning" | "critical",
         message: `Document "${row.filename}" (${row.category || 'Other'}) expires in ${daysUntil} days.`,
         status: "active",
         source: "system",
@@ -295,19 +301,22 @@ export async function POST(request: NextRequest) {
     ) {
       // Check if we already have this alert
       const existingAlert = await db.execute(sql`
-        SELECT 1 FROM alerts
+        SELECT 1 FROM master_alerts
         WHERE tenant_id = ${tenantId}
-          AND type = 'missing_payroll'
+          AND alert_type = 'missing_payroll'
           AND status = 'active'
           AND created_at >= DATE_TRUNC('month', CURRENT_DATE)
       `);
 
       if (existingAlert.rows.length === 0) {
-        await db.insert(alerts).values({
+        const severity = isEndOfMonth ? "warning" : "info";
+        await db.insert(masterAlerts).values({
           tenantId,
+          category: "standard",
           domain: "hr",
-          type: "missing_payroll",
-          severity: isEndOfMonth ? "warning" : "info",
+          alertType: "missing_payroll",
+          title: "Missing Payroll",
+          severity: severity as "info" | "warning" | "critical",
           message: `No payroll run created for current month.${isEndOfMonth ? ' Month end approaching!' : ''}`,
           status: "active",
           source: "system",
@@ -318,7 +327,7 @@ export async function POST(request: NextRequest) {
         generatedAlerts.push({
           title: "Missing Payroll",
           message: "No payroll run for current month",
-          severity: isEndOfMonth ? "warning" : "info",
+          severity,
           entityType: "tenant",
           entityId: tenantId,
         });
@@ -336,19 +345,22 @@ export async function POST(request: NextRequest) {
     const pendingCount = parseInt(String(pendingLeave.rows[0]?.count || 0));
     if (pendingCount > 0) {
       const existingAlert = await db.execute(sql`
-        SELECT 1 FROM alerts
+        SELECT 1 FROM master_alerts
         WHERE tenant_id = ${tenantId}
-          AND type = 'pending_leave_requests'
+          AND alert_type = 'pending_leave_requests'
           AND status = 'active'
           AND created_at >= CURRENT_DATE
       `);
 
       if (existingAlert.rows.length === 0) {
-        await db.insert(alerts).values({
+        const severity = pendingCount > 5 ? "warning" : "info";
+        await db.insert(masterAlerts).values({
           tenantId,
+          category: "standard",
           domain: "hr",
-          type: "pending_leave_requests",
-          severity: pendingCount > 5 ? "warning" : "info",
+          alertType: "pending_leave_requests",
+          title: "Pending Leave Requests",
+          severity: severity as "info" | "warning" | "critical",
           message: `${pendingCount} leave request${pendingCount > 1 ? 's' : ''} pending approval.`,
           status: "active",
           source: "system",
@@ -359,7 +371,7 @@ export async function POST(request: NextRequest) {
         generatedAlerts.push({
           title: "Pending Leave Requests",
           message: `${pendingCount} pending`,
-          severity: pendingCount > 5 ? "warning" : "info",
+          severity,
           entityType: "leave_request",
           entityId: tenantId,
         });

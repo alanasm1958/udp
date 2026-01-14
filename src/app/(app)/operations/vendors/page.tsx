@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { GlassCard, GlassButton, GlassInput, EmptyState, useToast } from "@/components/ui/glass";
-import { Users, ArrowLeft, Search, Mail, Phone, Star, Building } from "lucide-react";
+import { GlassCard, GlassButton, GlassInput, GlassBadge, PageHeader, Spinner, EmptyState, useToast } from "@/components/ui/glass";
+import { Users, Mail, Phone, Star, Building } from "lucide-react";
 
 interface Vendor {
   id: string;
@@ -39,7 +39,23 @@ export default function VendorsPage() {
       const res = await fetch("/api/master/parties?type=vendor");
       if (res.ok) {
         const data = await res.json();
-        setVendors(data.parties || []);
+        // Map API response fields to expected format
+        setVendors((data.items || []).map((p: { id: string; displayName: string; code: string | null; createdAt: string }) => ({
+          id: p.id,
+          code: p.code,
+          name: p.displayName,
+          email: null,
+          phone: null,
+          address: null,
+          city: null,
+          state: null,
+          country: null,
+          taxId: null,
+          defaultCurrency: null,
+          notes: null,
+          metadata: null,
+          createdAt: p.createdAt,
+        })));
       }
     } catch (error) {
       console.error("Error loading vendors:", error);
@@ -75,40 +91,32 @@ export default function VendorsPage() {
   };
 
   return (
-    <div className="min-h-screen p-8 space-y-8">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <GlassButton onClick={() => router.push("/operations")} variant="ghost" size="sm">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </GlassButton>
-          <div>
-            <h1 className="text-3xl font-bold">Vendors</h1>
-            <p className="text-white/60">Manage vendor relationships and suppliers</p>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="Vendors"
+        description="Manage vendor relationships and suppliers"
+      />
 
       {/* Search */}
-      <div className="flex gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-white/40" />
-          <GlassInput
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by name, code, or email..."
-            className="pl-10"
-          />
+      <GlassCard padding="sm">
+        <div className="flex gap-4 items-center">
+          <div className="flex-1 max-w-md">
+            <GlassInput
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search by name, code, or email..."
+            />
+          </div>
+          <span className="text-sm text-white/40">{filteredVendors.length} vendors</span>
         </div>
-      </div>
+      </GlassCard>
 
       {/* Vendors List */}
-      <GlassCard>
+      <GlassCard padding="none">
         {isLoading ? (
           <div className="p-8 text-center">
-            <div className="animate-spin w-8 h-8 border-2 border-white/20 border-t-white/60 rounded-full mx-auto" />
-            <p className="text-white/40 mt-4">Loading vendors...</p>
+            <Spinner size="md" />
+            <p className="text-white/40 text-sm mt-4">Loading vendors...</p>
           </div>
         ) : filteredVendors.length === 0 ? (
           <EmptyState
@@ -135,9 +143,9 @@ export default function VendorsPage() {
                         {vendor.code && (
                           <span className="text-sm text-white/40 font-mono">{vendor.code}</span>
                         )}
-                        <span className="text-xs px-2 py-1 rounded bg-cyan-500/20 text-cyan-400">
+                        <GlassBadge variant="info">
                           {getTypeLabel(getVendorType(vendor))}
-                        </span>
+                        </GlassBadge>
                       </div>
                       <div className="flex items-center gap-6 text-sm text-white/60">
                         {vendor.email && (

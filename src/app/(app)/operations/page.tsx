@@ -288,12 +288,12 @@ export default function OperationsPage() {
   };
 
   return (
-    <div className="min-h-screen p-8 space-y-8">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">Operations</h1>
-          <p className="text-white/60">
+          <h1 className="text-2xl font-semibold tracking-tight text-white">Operations</h1>
+          <p className="text-sm text-white/50 mt-1">
             Manage inventory, assets, vendors, and operational activities
           </p>
         </div>
@@ -305,7 +305,7 @@ export default function OperationsPage() {
 
       {/* Analytics Snapshot */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Analytics Snapshot</h2>
+        <h2 className="text-lg font-semibold text-white">Analytics Snapshot</h2>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           {analytics ? (
             <>
@@ -431,7 +431,7 @@ export default function OperationsPage() {
 
       {/* Quick Access */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold">Quick Access</h2>
+        <h2 className="text-lg font-semibold text-white">Quick Access</h2>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {QUICK_ACCESS_CARDS.map((card) => (
             <Link key={card.id} href={card.href}>

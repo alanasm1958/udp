@@ -3,11 +3,12 @@
  *
  * Endpoints for AI-generated tasks requiring human confirmation.
  * These tasks are suggestions/detections that should never auto-execute.
+ * Now uses master_tasks table with category='ai_suggestion'
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { aiTasks, users } from "@/db/schema";
+import { masterTasks } from "@/db/schema";
 import { eq, and, ilike, or, inArray, desc, sql } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -41,101 +42,100 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const limitParam = url.searchParams.get("limit");
     const limit = Math.min(Math.max(parseInt(limitParam || "50", 10) || 50, 1), 200);
 
-    const conditions = [eq(aiTasks.tenantId, tenantId)];
+    // Filter by category='ai_suggestion' for AI tasks
+    const conditions = [
+      eq(masterTasks.tenantId, tenantId),
+      eq(masterTasks.category, "ai_suggestion"),
+    ];
 
     if (statusFilter) {
-      const validStatuses = ["pending", "in_review", "approved", "rejected", "auto_resolved", "expired"];
-      if (validStatuses.includes(statusFilter)) {
-        conditions.push(eq(aiTasks.status, statusFilter as typeof aiTasks.status.enumValues[number]));
-      }
+      // Map legacy AI task statuses to master task statuses
+      const statusMap: Record<string, typeof masterTasks.status.enumValues[number]> = {
+        pending: "open",
+        in_review: "in_review",
+        approved: "approved",
+        rejected: "rejected",
+        auto_resolved: "auto_resolved",
+        expired: "expired",
+      };
+      const mappedStatus = statusMap[statusFilter] || statusFilter;
+      conditions.push(eq(masterTasks.status, mappedStatus as typeof masterTasks.status.enumValues[number]));
     }
 
     if (typeFilter) {
-      const validTypes = [
-        "link_person_to_user",
-        "merge_duplicate_people",
-        "complete_quick_add",
-        "assign_item_to_warehouse",
-        "approve_purchase_variance",
-        "low_stock_reorder",
-        "service_job_unassigned",
-        "service_job_overdue",
-        "supplier_delay_impact",
-        "review_substitution",
-        "landed_cost_allocation",
-      ];
-      if (validTypes.includes(typeFilter)) {
-        conditions.push(eq(aiTasks.taskType, typeFilter as typeof aiTasks.taskType.enumValues[number]));
-      }
+      conditions.push(eq(masterTasks.taskType, typeFilter));
     }
 
     if (priorityFilter) {
-      conditions.push(eq(aiTasks.priority, priorityFilter));
+      conditions.push(eq(masterTasks.priority, priorityFilter as typeof masterTasks.priority.enumValues[number]));
     }
 
     if (assignedToUserId && isValidUuid(assignedToUserId)) {
-      conditions.push(eq(aiTasks.assignedToUserId, assignedToUserId));
+      conditions.push(eq(masterTasks.assigneeUserId, assignedToUserId));
     }
 
     if (primaryEntityType) {
-      conditions.push(eq(aiTasks.primaryEntityType, primaryEntityType));
+      conditions.push(eq(masterTasks.relatedEntityType, primaryEntityType));
     }
 
     if (primaryEntityId && isValidUuid(primaryEntityId)) {
-      conditions.push(eq(aiTasks.primaryEntityId, primaryEntityId));
+      conditions.push(eq(masterTasks.relatedEntityId, primaryEntityId));
     }
 
     if (searchQuery) {
       const searchPattern = `%${searchQuery}%`;
       conditions.push(
         or(
-          ilike(aiTasks.title, searchPattern),
-          ilike(aiTasks.description, searchPattern)
+          ilike(masterTasks.title, searchPattern),
+          ilike(masterTasks.description, searchPattern)
         )!
       );
     }
 
     const tasksList = await db
       .select({
-        id: aiTasks.id,
-        taskType: aiTasks.taskType,
-        status: aiTasks.status,
-        title: aiTasks.title,
-        description: aiTasks.description,
-        reasoning: aiTasks.reasoning,
-        confidenceScore: aiTasks.confidenceScore,
-        primaryEntityType: aiTasks.primaryEntityType,
-        primaryEntityId: aiTasks.primaryEntityId,
-        secondaryEntityType: aiTasks.secondaryEntityType,
-        secondaryEntityId: aiTasks.secondaryEntityId,
-        suggestedAction: aiTasks.suggestedAction,
-        assignedToUserId: aiTasks.assignedToUserId,
-        priority: aiTasks.priority,
-        dueAt: aiTasks.dueAt,
-        createdAt: aiTasks.createdAt,
+        id: masterTasks.id,
+        taskType: masterTasks.taskType,
+        status: masterTasks.status,
+        title: masterTasks.title,
+        description: masterTasks.description,
+        reasoning: masterTasks.reasoning,
+        confidenceScore: masterTasks.confidenceScore,
+        primaryEntityType: masterTasks.relatedEntityType,
+        primaryEntityId: masterTasks.relatedEntityId,
+        secondaryEntityType: masterTasks.secondaryEntityType,
+        secondaryEntityId: masterTasks.secondaryEntityId,
+        suggestedAction: masterTasks.suggestedAction,
+        assignedToUserId: masterTasks.assigneeUserId,
+        priority: masterTasks.priority,
+        dueAt: masterTasks.dueAt,
+        createdAt: masterTasks.createdAt,
       })
-      .from(aiTasks)
+      .from(masterTasks)
       .where(and(...conditions))
       .orderBy(
         sql`CASE
-          WHEN ${aiTasks.priority} = 'urgent' THEN 1
-          WHEN ${aiTasks.priority} = 'high' THEN 2
-          WHEN ${aiTasks.priority} = 'normal' THEN 3
+          WHEN ${masterTasks.priority} = 'urgent' THEN 1
+          WHEN ${masterTasks.priority} = 'high' THEN 2
+          WHEN ${masterTasks.priority} = 'normal' THEN 3
           ELSE 4
         END`,
-        desc(aiTasks.createdAt)
+        desc(masterTasks.createdAt)
       )
       .limit(limit);
 
-    // Get summary counts
+    // Get summary counts for AI tasks only
     const [counts] = await db
       .select({
-        pending: sql<number>`count(*) filter (where ${aiTasks.status} = 'pending')`,
-        inReview: sql<number>`count(*) filter (where ${aiTasks.status} = 'in_review')`,
+        pending: sql<number>`count(*) filter (where ${masterTasks.status} = 'open')`,
+        inReview: sql<number>`count(*) filter (where ${masterTasks.status} = 'in_review')`,
         total: sql<number>`count(*)`,
       })
-      .from(aiTasks)
-      .where(eq(aiTasks.tenantId, tenantId));
+      .from(masterTasks)
+      .where(and(
+        eq(masterTasks.tenantId, tenantId),
+        eq(masterTasks.category, "ai_suggestion")
+      ));
 
     return NextResponse.json({
       tasks: tasksList,
@@ -201,13 +201,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // Check for duplicate via triggerHash
     if (body.triggerHash) {
       const [existing] = await db
-        .select({ id: aiTasks.id })
-        .from(aiTasks)
+        .select({ id: masterTasks.id })
+        .from(masterTasks)
         .where(
           and(
-            eq(aiTasks.tenantId, tenantId),
-            eq(aiTasks.triggerHash, body.triggerHash),
-            inArray(aiTasks.status, ["pending", "in_review"])
+            eq(masterTasks.tenantId, tenantId),
+            eq(masterTasks.category, "ai_suggestion"),
+            eq(masterTasks.triggerHash, body.triggerHash),
+            inArray(masterTasks.status, ["open", "in_review"])
           )
         );
 
@@ -220,22 +221,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
 
     const [task] = await db
-      .insert(aiTasks)
+      .insert(masterTasks)
       .values({
         tenantId,
+        category: "ai_suggestion",
+        domain: body.domain || "operations",
         taskType: body.taskType,
-        status: "pending",
+        status: "open",
         title: body.title,
         description: body.description,
         reasoning: body.reasoning ?? null,
         confidenceScore: body.confidenceScore ? String(body.confidenceScore) : null,
-        primaryEntityType: body.primaryEntityType ?? null,
-        primaryEntityId: body.primaryEntityId ?? null,
+        relatedEntityType: body.primaryEntityType ?? null,
+        relatedEntityId: body.primaryEntityId ?? null,
         secondaryEntityType: body.secondaryEntityType ?? null,
         secondaryEntityId: body.secondaryEntityId ?? null,
         suggestedAction: body.suggestedAction ?? {},
-        assignedToUserId: body.assignedToUserId ?? null,
-        ownerRoleName: body.ownerRoleName ?? null,
+        assigneeUserId: body.assignedToUserId ?? null,
+        assignedToRole: body.ownerRoleName ?? null,
         priority: body.priority ?? "normal",
         dueAt: body.dueAt ? new Date(body.dueAt) : null,
         expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,

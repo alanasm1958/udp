@@ -75,11 +75,23 @@ export default function RecordPaymentForm({ onBack, onSuccess }: RecordPaymentFo
 
       if (customersRes.ok) {
         const data = await customersRes.json();
-        setCustomers(data.parties || []);
+        // Map API response fields to expected format
+        setCustomers((data.items || []).map((p: { id: string; displayName: string; code: string | null; partyType: string }) => ({
+          id: p.id,
+          name: p.displayName,
+          code: p.code,
+          type: p.partyType,
+        })));
       }
       if (vendorsRes.ok) {
         const data = await vendorsRes.json();
-        setVendors(data.parties || []);
+        // Map API response fields to expected format
+        setVendors((data.items || []).map((p: { id: string; displayName: string; code: string | null; partyType: string }) => ({
+          id: p.id,
+          name: p.displayName,
+          code: p.code,
+          type: p.partyType,
+        })));
       }
     } catch (error) {
       console.error("Error loading parties:", error);

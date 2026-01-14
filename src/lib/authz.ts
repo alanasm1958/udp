@@ -1,9 +1,12 @@
 /**
  * Authorization helpers
- * RBAC enforcement for API routes
+ * RBAC enforcement for API routes with granular permissions
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/db";
+import { roles, rolePermissions, permissions } from "@/db/schema";
+import { eq, and, inArray } from "drizzle-orm";
 
 // Role definitions
 export const ROLES = {
@@ -112,4 +115,176 @@ export function unauthorizedResponse(): NextResponse {
  */
 export function forbiddenResponse(message = "Forbidden: insufficient permissions"): NextResponse {
   return NextResponse.json({ error: message }, { status: 403 });
+}
+
+// ============================================================================
+// GRANULAR PERMISSIONS
+// ============================================================================
+
+/**
+ * Permission cache to avoid repeated database queries
+ * Key: "tenantId:role1,role2" -> { permissions: string[], expiry: number }
+ */
+const permissionCache = new Map<string, { permissions: string[]; expiry: number }>();
+const CACHE_TTL = 60000; // 1 minute
+
+/**
+ * Get all permissions for a user's roles in a tenant
+ * Admin role returns ["*"] wildcard for implicit access to everything
+ */
+export async function getUserPermissions(
+  tenantId: string,
+  userRoleNames: string[]
+): Promise<string[]> {
+  // Admin has all permissions implicitly
+  if (userRoleNames.includes(ROLES.ADMIN)) {
+    return ["*"]; // Wildcard for admin
+  }
+
+  if (userRoleNames.length === 0) {
+    return [];
+  }
+
+  // Check cache first
+  const cacheKey = `${tenantId}:${userRoleNames.sort().join(",")}`;
+  const cached = permissionCache.get(cacheKey);
+
+  if (cached && cached.expiry > Date.now()) {
+    return cached.permissions;
+  }
+
+  // Get role IDs for the user's roles in this tenant
+  const roleRows = await db
+    .select({ id: roles.id })
+    .from(roles)
+    .where(and(eq(roles.tenantId, tenantId), inArray(roles.name, userRoleNames)));
+
+  const roleIds = roleRows.map((r) => r.id);
+
+  if (roleIds.length === 0) {
+    return [];
+  }
+
+  // Get all permissions assigned to these roles
+  const permissionRows = await db
+    .select({ code: permissions.code })
+    .from(rolePermissions)
+    .innerJoin(permissions, eq(rolePermissions.permissionId, permissions.id))
+    .where(
+      and(eq(rolePermissions.tenantId, tenantId), inArray(rolePermissions.roleId, roleIds))
+    );
+
+  const userPermissions = [...new Set(permissionRows.map((p) => p.code))];
+
+  // Cache the result
+  permissionCache.set(cacheKey, {
+    permissions: userPermissions,
+    expiry: Date.now() + CACHE_TTL,
+  });
+
+  return userPermissions;
+}
+
+/**
+ * Check if user has a specific permission
+ */
+export function hasPermission(userPermissions: string[], requiredPermission: string): boolean {
+  // Admin wildcard grants all permissions
+  if (userPermissions.includes("*")) {
+    return true;
+  }
+
+  return userPermissions.includes(requiredPermission);
+}
+
+/**
+ * Check if user has ANY of the required permissions
+ */
+export function hasAnyPermission(
+  userPermissions: string[],
+  requiredPermissions: string[]
+): boolean {
+  // Admin wildcard grants all permissions
+  if (userPermissions.includes("*")) {
+    return true;
+  }
+
+  return requiredPermissions.some((p) => userPermissions.includes(p));
+}
+
+/**
+ * Check if user has ALL of the required permissions
+ */
+export function hasAllPermissions(
+  userPermissions: string[],
+  requiredPermissions: string[]
+): boolean {
+  // Admin wildcard grants all permissions
+  if (userPermissions.includes("*")) {
+    return true;
+  }
+
+  return requiredPermissions.every((p) => userPermissions.includes(p));
+}
+
+/**
+ * Extended auth context with cached permissions
+ */
+export interface AuthContextWithPermissions extends AuthContext {
+  permissions: string[];
+}
+
+/**
+ * Require specific permission(s) - returns 403 if not authorized
+ * Accepts a single permission string or an array (any of which grants access)
+ */
+export async function requirePermission(
+  req: NextRequest,
+  requiredPermissions: string | string[]
+): Promise<AuthContextWithPermissions | NextResponse> {
+  const authResult = requireAuth(req);
+
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
+  const auth = authResult as AuthContext;
+  const permissionsToCheck = Array.isArray(requiredPermissions)
+    ? requiredPermissions
+    : [requiredPermissions];
+
+  // Get user's permissions
+  const userPermissions = await getUserPermissions(auth.tenantId, auth.roles);
+
+  if (!hasAnyPermission(userPermissions, permissionsToCheck)) {
+    return NextResponse.json(
+      {
+        error: "Forbidden: insufficient permissions",
+        required: permissionsToCheck,
+      },
+      { status: 403 }
+    );
+  }
+
+  return {
+    ...auth,
+    permissions: userPermissions,
+  };
+}
+
+/**
+ * Clear permission cache for a tenant (call after role permission updates)
+ * If no tenantId provided, clears entire cache
+ */
+export function clearPermissionCache(tenantId?: string): void {
+  if (tenantId) {
+    // Clear entries for specific tenant
+    for (const key of permissionCache.keys()) {
+      if (key.startsWith(`${tenantId}:`)) {
+        permissionCache.delete(key);
+      }
+    }
+  } else {
+    permissionCache.clear();
+  }
 }

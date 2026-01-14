@@ -73,24 +73,42 @@ interface DashboardData {
 
 interface Alert {
   id: string;
-  type: string;
-  severity: "high" | "medium" | "low";
+  alertType: string;
+  severity: "info" | "warning" | "critical";
   title: string;
-  description: string;
+  message: string | null;
   domain: string;
+  category: string;
+  status: string;
   createdAt: string;
-  metadata: Record<string, unknown>;
-  actions: {
-    plannerUrl?: string;
-    createTask?: boolean;
-    createCard?: boolean;
-  };
+  relatedEntityType?: string | null;
+  relatedEntityId?: string | null;
 }
 
 interface AlertsResponse {
-  items: Alert[];
-  total: number;
-  generatedAt: string;
+  alerts: Alert[];
+  pagination: { total: number };
+  summary: Record<string, unknown>;
+}
+
+interface Task {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  domain: string;
+  category: string;
+  dueAt: string | null;
+  createdAt: string;
+  relatedEntityType?: string | null;
+  relatedEntityId?: string | null;
+}
+
+interface TasksResponse {
+  tasks: Task[];
+  pagination: { total: number };
+  summary: Record<string, unknown>;
 }
 
 interface AICard {
@@ -121,15 +139,17 @@ const DATE_RANGE_OPTIONS = [
 ];
 
 const severityColors = {
-  high: "danger",
-  medium: "warning",
-  low: "info",
+  critical: "danger",
+  warning: "warning",
+  info: "info",
 } as const;
 
 const priorityColors = {
-  high: "danger",
-  medium: "warning",
-  low: "info",
+  critical: "danger",
+  urgent: "danger",
+  high: "warning",
+  normal: "info",
+  low: "default",
 } as const;
 
 /* ────────────────────────────────────────────────────────────────────────────
@@ -253,6 +273,7 @@ function DashboardContent() {
 
   const [data, setData] = React.useState<DashboardData | null>(null);
   const [alerts, setAlerts] = React.useState<Alert[]>([]);
+  const [tasks, setTasks] = React.useState<Task[]>([]);
   const [cards, setCards] = React.useState<AICard[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -263,14 +284,46 @@ function DashboardContent() {
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResult, alertsResult, cardsResult] = await Promise.all([
+      // Load each endpoint separately to handle individual failures
+      const [dashboardResult, alertsResult, tasksResult, cardsResult] = await Promise.allSettled([
         apiGet<DashboardData>(`/api/reports/dashboard?range=${selectedRange}`),
-        apiGet<AlertsResponse>("/api/grc/alerts"),
+        apiGet<AlertsResponse>("/api/master/alerts?status=active&limit=5"),
+        apiGet<TasksResponse>("/api/master/tasks?status=open&limit=5"),
         apiGet<CardsResponse>("/api/ai/cards"),
       ]);
-      setData(dashboardResult);
-      setAlerts(alertsResult.items?.slice(0, 5) || []);
-      setCards(cardsResult.items?.slice(0, 3) || []);
+
+      // Handle dashboard result
+      if (dashboardResult.status === "fulfilled") {
+        setData(dashboardResult.value);
+      }
+
+      // Handle alerts result
+      if (alertsResult.status === "fulfilled") {
+        setAlerts(alertsResult.value.alerts?.slice(0, 5) || []);
+      } else {
+        console.error("Failed to load alerts:", alertsResult.reason);
+        setAlerts([]);
+      }
+
+      // Handle tasks result
+      if (tasksResult.status === "fulfilled") {
+        setTasks(tasksResult.value.tasks?.slice(0, 5) || []);
+      } else {
+        console.error("Failed to load tasks:", tasksResult.reason);
+        setTasks([]);
+      }
+
+      // Handle cards result
+      if (cardsResult.status === "fulfilled") {
+        setCards(cardsResult.value.items?.slice(0, 3) || []);
+      } else {
+        setCards([]);
+      }
+
+      // Only show error if dashboard fails (the main content)
+      if (dashboardResult.status === "rejected") {
+        setError(dashboardResult.reason instanceof Error ? dashboardResult.reason.message : "Failed to load dashboard");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load dashboard");
     } finally {
@@ -349,89 +402,171 @@ function DashboardContent() {
         </div>
       ) : null}
 
-      {/* Alerts Preview */}
+      {/* Alerts & Tasks Preview */}
       {!loading && (
-        <GlassCard>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-              <svg
-                className="w-5 h-5 text-amber-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
-                />
-              </svg>
-              Needs Attention
-            </h2>
-            <Link
-              href="/grc/alerts"
-              className="text-sm text-amber-400 hover:text-amber-300 transition-colors"
-            >
-              View All
-            </Link>
-          </div>
-          {alerts.length > 0 ? (
-            <div className="space-y-3">
-              {alerts.map((alert) => (
-                <div
-                  key={alert.id}
-                  className="p-3 rounded-xl bg-white/5 hover:bg-white/8 transition-colors"
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Alerts */}
+          <GlassCard>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <svg
+                  className="w-5 h-5 text-amber-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
                 >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <GlassBadge variant={severityColors[alert.severity]}>
-                          {alert.severity}
-                        </GlassBadge>
-                        <span className="text-xs text-white/40 capitalize">
-                          {alert.domain}
-                        </span>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                  />
+                </svg>
+                Alerts
+              </h2>
+              <Link
+                href="/alerts"
+                className="text-sm text-amber-400 hover:text-amber-300 transition-colors"
+              >
+                View All
+              </Link>
+            </div>
+            {alerts.length > 0 ? (
+              <div className="space-y-3">
+                {alerts.map((alert) => (
+                  <div
+                    key={alert.id}
+                    className="p-3 rounded-xl bg-white/5 hover:bg-white/8 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <GlassBadge variant={severityColors[alert.severity] || "default"}>
+                            {alert.severity}
+                          </GlassBadge>
+                          <span className="text-xs text-white/40 capitalize">
+                            {alert.domain}
+                          </span>
+                        </div>
+                        <h4 className="font-medium text-white text-sm truncate">
+                          {alert.title}
+                        </h4>
+                        {alert.message && (
+                          <p className="text-xs text-white/50 mt-0.5 line-clamp-1">
+                            {alert.message}
+                          </p>
+                        )}
                       </div>
-                      <h4 className="font-medium text-white text-sm truncate">
-                        {alert.title}
-                      </h4>
-                      <p className="text-xs text-white/50 mt-0.5 line-clamp-1">
-                        {alert.description}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {alert.actions.plannerUrl && (
-                        <Link href={alert.actions.plannerUrl}>
-                          <GlassButton size="sm" variant="ghost">
-                            View
-                          </GlassButton>
-                        </Link>
-                      )}
+                      <Link href="/alerts">
+                        <GlassButton size="sm" variant="ghost">
+                          View
+                        </GlassButton>
+                      </Link>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex items-center gap-3 py-4 px-2 text-white/50">
-              <svg
-                className="w-5 h-5 text-emerald-400"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 py-4 px-2 text-white/50">
+                <svg
+                  className="w-5 h-5 text-emerald-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span className="text-sm">No active alerts</span>
+              </div>
+            )}
+          </GlassCard>
+
+          {/* Tasks */}
+          <GlassCard>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+                <svg
+                  className="w-5 h-5 text-blue-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                Open Tasks
+              </h2>
+              <Link
+                href="/tasks"
+                className="text-sm text-blue-400 hover:text-blue-300 transition-colors"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                />
-              </svg>
-              <span className="text-sm">No issues detected</span>
+                View All
+              </Link>
             </div>
-          )}
-        </GlassCard>
+            {tasks.length > 0 ? (
+              <div className="space-y-3">
+                {tasks.map((task) => (
+                  <div
+                    key={task.id}
+                    className="p-3 rounded-xl bg-white/5 hover:bg-white/8 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <GlassBadge variant={priorityColors[task.priority as keyof typeof priorityColors] || "default"}>
+                            {task.priority}
+                          </GlassBadge>
+                          <span className="text-xs text-white/40 capitalize">
+                            {task.domain}
+                          </span>
+                        </div>
+                        <h4 className="font-medium text-white text-sm truncate">
+                          {task.title}
+                        </h4>
+                        {task.dueAt && (
+                          <p className="text-xs text-white/50 mt-0.5">
+                            Due: {new Date(task.dueAt).toLocaleDateString()}
+                          </p>
+                        )}
+                      </div>
+                      <Link href="/tasks">
+                        <GlassButton size="sm" variant="ghost">
+                          View
+                        </GlassButton>
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 py-4 px-2 text-white/50">
+                <svg
+                  className="w-5 h-5 text-emerald-400"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span className="text-sm">No open tasks</span>
+              </div>
+            )}
+          </GlassCard>
+        </div>
       )}
 
       {/* Quick Actions */}

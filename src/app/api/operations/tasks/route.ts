@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { tasks, users } from "@/db/schema";
+import { masterTasks } from "@/db/schema";
 import { eq, and, desc, asc, sql } from "drizzle-orm";
 import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
 
 /**
  * GET /api/operations/tasks
  * Returns operations domain tasks sorted by priority, deadline, created_at
+ * Now uses master_tasks table with domain='operations'
  */
 export async function GET(request: NextRequest) {
   try {
@@ -15,54 +16,53 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status") || "open";
     const limit = parseInt(searchParams.get("limit") || "20");
 
-    // Try to fetch tasks - gracefully handle if table structure differs
-    try {
-      // Priority order: critical > high > medium > low
-      const priorityOrder = sql`CASE
-        WHEN ${tasks.priority} = 'critical' THEN 1
-        WHEN ${tasks.priority} = 'high' THEN 2
-        WHEN ${tasks.priority} = 'medium' THEN 3
-        WHEN ${tasks.priority} = 'normal' THEN 4
-        WHEN ${tasks.priority} = 'low' THEN 5
-        ELSE 6
-      END`;
+    // Priority order: critical > urgent > high > normal > low
+    const priorityOrder = sql`CASE
+      WHEN ${masterTasks.priority} = 'critical' THEN 1
+      WHEN ${masterTasks.priority} = 'urgent' THEN 2
+      WHEN ${masterTasks.priority} = 'high' THEN 3
+      WHEN ${masterTasks.priority} = 'normal' THEN 4
+      WHEN ${masterTasks.priority} = 'low' THEN 5
+      ELSE 6
+    END`;
 
-      const taskResults = await db
-        .select({
-          id: tasks.id,
-          title: tasks.title,
-          description: tasks.description,
-          status: tasks.status,
-          priority: tasks.priority,
-          dueAt: tasks.dueAt,
-          createdAt: tasks.createdAt,
-        })
-        .from(tasks)
-        .where(
-          and(
-            eq(tasks.tenantId, tenantId),
-            status !== "all" ? eq(tasks.status, status) : undefined
-          )
+    const taskResults = await db
+      .select({
+        id: masterTasks.id,
+        title: masterTasks.title,
+        description: masterTasks.description,
+        status: masterTasks.status,
+        priority: masterTasks.priority,
+        dueAt: masterTasks.dueAt,
+        createdAt: masterTasks.createdAt,
+        category: masterTasks.category,
+        taskType: masterTasks.taskType,
+        assigneeUserId: masterTasks.assigneeUserId,
+        relatedEntityType: masterTasks.relatedEntityType,
+        relatedEntityId: masterTasks.relatedEntityId,
+      })
+      .from(masterTasks)
+      .where(
+        and(
+          eq(masterTasks.tenantId, tenantId),
+          eq(masterTasks.domain, "operations"),
+          status !== "all" ? eq(masterTasks.status, status as typeof masterTasks.status.enumValues[number]) : undefined
         )
-        .orderBy(
-          priorityOrder,
-          asc(tasks.dueAt),
-          desc(tasks.createdAt)
-        )
-        .limit(limit);
+      )
+      .orderBy(
+        priorityOrder,
+        asc(masterTasks.dueAt),
+        desc(masterTasks.createdAt)
+      )
+      .limit(limit);
 
-      return NextResponse.json({
-        tasks: taskResults.map((t) => ({
-          ...t,
-          dueAt: t.dueAt?.toISOString() || null,
-          createdAt: t.createdAt.toISOString(),
-        })),
-      });
-    } catch (dbError) {
-      // If query fails due to schema mismatch, return empty tasks
-      console.error("Tasks query error (schema mismatch?):", dbError);
-      return NextResponse.json({ tasks: [] });
-    }
+    return NextResponse.json({
+      tasks: taskResults.map((t) => ({
+        ...t,
+        dueAt: t.dueAt?.toISOString() || null,
+        createdAt: t.createdAt.toISOString(),
+      })),
+    });
   } catch (error) {
     console.error("Operations tasks error:", error);
     if (error instanceof TenantError) {

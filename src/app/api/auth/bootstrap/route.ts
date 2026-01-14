@@ -6,9 +6,10 @@
 
 import { NextResponse } from "next/server";
 import { db } from "@/db";
-import { tenants, users, actors, roles, userRoles, subscriptionPlans, tenantSubscriptions } from "@/db/schema";
+import { tenants, users, actors, roles, userRoles, subscriptionPlans, tenantSubscriptions, permissions, rolePermissions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { hashPassword } from "@/lib/password";
+import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from "@/lib/permissions";
 
 const ADMIN_EMAIL = "admin@local";
 const ADMIN_PASSWORD = "admin1234";
@@ -64,6 +65,16 @@ export async function POST(): Promise<NextResponse> {
       if (!existingPlan) {
         await db.insert(subscriptionPlans).values(planData);
       }
+    }
+
+    // Seed global permissions (not tenant-scoped)
+    const [existingPerm] = await db
+      .select({ id: permissions.id })
+      .from(permissions)
+      .limit(1);
+
+    if (!existingPerm) {
+      await db.insert(permissions).values(ALL_PERMISSIONS);
     }
 
     // Ensure default tenant has a subscription
@@ -179,10 +190,15 @@ export async function POST(): Promise<NextResponse> {
       adminRole = newRole;
     }
 
-    // Create other standard roles
+    // Create other standard roles and seed their default permissions
     const standardRoles = ["finance", "inventory", "sales", "procurement"];
+
+    // Get all permissions for mapping code -> id
+    const allPerms = await db.select().from(permissions);
+    const permMap = new Map(allPerms.map((p) => [p.code, p.id]));
+
     for (const roleName of standardRoles) {
-      const [existing] = await db
+      let [existingRole] = await db
         .select({ id: roles.id })
         .from(roles)
         .where(
@@ -193,11 +209,35 @@ export async function POST(): Promise<NextResponse> {
         )
         .limit(1);
 
-      if (!existing) {
-        await db.insert(roles).values({
+      if (!existingRole) {
+        const [newRole] = await db.insert(roles).values({
           tenantId: tenant.id,
           name: roleName,
-        });
+        }).returning({ id: roles.id });
+        existingRole = newRole;
+      }
+
+      // Seed default permissions for this role if none exist
+      const [existingRolePerm] = await db
+        .select({ permissionId: rolePermissions.permissionId })
+        .from(rolePermissions)
+        .where(eq(rolePermissions.roleId, existingRole.id))
+        .limit(1);
+
+      if (!existingRolePerm) {
+        const defaultPerms = DEFAULT_ROLE_PERMISSIONS[roleName] || [];
+        const permissionValues = defaultPerms
+          .map((code) => permMap.get(code))
+          .filter((id): id is string => id !== undefined)
+          .map((permissionId) => ({
+            tenantId: tenant.id,
+            roleId: existingRole.id,
+            permissionId,
+          }));
+
+        if (permissionValues.length > 0) {
+          await db.insert(rolePermissions).values(permissionValues);
+        }
       }
     }
 

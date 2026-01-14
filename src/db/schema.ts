@@ -10,6 +10,7 @@ import {
   jsonb,
   date,
   uniqueIndex,
+  unique,
   index,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -85,6 +86,22 @@ export const userRoles = pgTable(
   }),
 );
 
+/* Permissions (system-wide definitions) */
+export const permissions = pgTable(
+  "permissions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    code: text("code").notNull().unique(), // e.g., 'finance:create'
+    module: text("module").notNull(), // e.g., 'finance'
+    action: text("action").notNull(), // e.g., 'create'
+    description: text("description"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    moduleIdx: index("permissions_module_idx").on(t.module),
+  }),
+);
+
 /* Actors (user/system/connector) */
 export const actors = pgTable("actors", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -95,6 +112,22 @@ export const actors = pgTable("actors", {
   connectorName: text("connector_name"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/* Role-Permission Assignments (tenant-scoped) */
+export const rolePermissions = pgTable(
+  "role_permissions",
+  {
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    roleId: uuid("role_id").notNull().references(() => roles.id),
+    permissionId: uuid("permission_id").notNull().references(() => permissions.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+  },
+  (t) => ({
+    uniq: uniqueIndex("role_permissions_uniq").on(t.tenantId, t.roleId, t.permissionId),
+    tenantRoleIdx: index("role_permissions_tenant_role_idx").on(t.tenantId, t.roleId),
+  }),
+);
 
 /* Tenant Settings */
 export const tenantSettings = pgTable("tenant_settings", {
@@ -470,6 +503,205 @@ export const alertEvents = pgTable("alert_events", {
 });
 
 /* ─────────────────────────────────────────────────────────────────────────────
+   MASTER TASKS & ALERTS (Unified Cross-Module Tables)
+   Consolidates: tasks, grcTasks, marketingTasks, aiTasks, alerts, grcAlerts
+   ───────────────────────────────────────────────────────────────────────────── */
+
+// Master task category - identifies the source/type of task
+export const masterTaskCategory = pgEnum("master_task_category", [
+  "standard",      // Generic tasks (Operations, HR, Finance, Sales)
+  "compliance",    // GRC tasks
+  "marketing",     // Marketing tasks
+  "ai_suggestion", // AI-generated tasks requiring confirmation
+]);
+
+// Master task status - unified status across all task types
+export const masterTaskStatus = pgEnum("master_task_status", [
+  "open",          // Not started
+  "in_progress",   // Being worked on
+  "blocked",       // Blocked (GRC)
+  "in_review",     // Under review (AI)
+  "completed",     // Done successfully
+  "cancelled",     // Manually cancelled
+  "auto_resolved", // System resolved
+  "approved",      // Action confirmed (AI)
+  "rejected",      // Action declined (AI)
+  "expired",       // Task expired (AI)
+]);
+
+// Master task priority - unified priority levels
+export const masterTaskPriority = pgEnum("master_task_priority", [
+  "low",
+  "normal",
+  "high",
+  "urgent",
+  "critical",
+]);
+
+// Master alert category
+export const masterAlertCategory = pgEnum("master_alert_category", [
+  "standard",   // Generic alerts (Operations, HR, Finance, Sales)
+  "compliance", // GRC alerts
+]);
+
+// Master alert status
+export const masterAlertStatus = pgEnum("master_alert_status", [
+  "active",
+  "acknowledged",
+  "resolved",
+  "dismissed",
+]);
+
+// Master alert severity
+export const masterAlertSeverity = pgEnum("master_alert_severity", [
+  "info",
+  "warning",
+  "critical",
+]);
+
+// Master alert source
+export const masterAlertSource = pgEnum("master_alert_source", [
+  "system",
+  "ai",
+  "connector",
+  "user",
+]);
+
+/**
+ * Master Tasks - Unified task table for all modules
+ * Consolidates: tasks, grcTasks, marketingTasks, aiTasks
+ */
+export const masterTasks = pgTable(
+  "master_tasks",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Classification
+    category: masterTaskCategory("category").notNull(),
+    domain: text("domain").notNull(), // operations, hr, finance, sales, grc, marketing
+    taskType: text("task_type"), // marketing_task_type or ai_task_type value (optional)
+
+    // Core fields (common to all)
+    title: text("title").notNull(),
+    description: text("description"),
+    status: masterTaskStatus("status").notNull().default("open"),
+    priority: masterTaskPriority("priority").notNull().default("normal"),
+
+    // Assignment
+    assigneeUserId: uuid("assignee_user_id").references(() => users.id),
+    assigneeActorId: uuid("assignee_actor_id").references(() => actors.id),
+    assignedToRole: text("assigned_to_role"),
+
+    // Timing
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+
+    // Entity linking
+    relatedEntityType: text("related_entity_type"),
+    relatedEntityId: uuid("related_entity_id"),
+    secondaryEntityType: text("secondary_entity_type"),
+    secondaryEntityId: uuid("secondary_entity_id"),
+
+    // AI-specific (nullable for non-AI tasks)
+    confidenceScore: numeric("confidence_score", { precision: 5, scale: 4 }),
+    reasoning: text("reasoning"),
+    suggestedAction: jsonb("suggested_action"),
+
+    // Marketing-specific (nullable for non-marketing tasks)
+    actionUrl: text("action_url"),
+    whyThis: text("why_this"),
+    expectedOutcome: text("expected_outcome"),
+
+    // GRC-specific (nullable for non-GRC tasks)
+    requirementId: uuid("requirement_id"),
+    actionType: text("action_type"),
+    blockedReason: text("blocked_reason"),
+    completionEvidence: jsonb("completion_evidence"),
+
+    // Deduplication (marketing/AI)
+    triggerHash: text("trigger_hash"),
+    triggerCount: integer("trigger_count").default(1),
+    lastTriggeredAt: timestamp("last_triggered_at", { withTimezone: true }),
+
+    // Resolution
+    resolvedByActorId: uuid("resolved_by_actor_id").references(() => actors.id),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolutionAction: text("resolution_action"),
+    resolutionNotes: text("resolution_notes"),
+    autoResolved: boolean("auto_resolved").default(false),
+
+    // Extended data (module-specific overflow)
+    metadata: jsonb("metadata").notNull().default({}),
+
+    // Audit
+    createdByActorId: uuid("created_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantDomain: index("master_tasks_tenant_domain_idx").on(t.tenantId, t.domain),
+    idxTenantStatus: index("master_tasks_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantCategory: index("master_tasks_tenant_category_idx").on(t.tenantId, t.category),
+    idxTenantPriority: index("master_tasks_tenant_priority_idx").on(t.tenantId, t.priority, t.status),
+    idxTriggerHash: index("master_tasks_trigger_hash_idx").on(t.tenantId, t.triggerHash),
+    idxAssignee: index("master_tasks_assignee_idx").on(t.assigneeUserId),
+    idxRequirement: index("master_tasks_requirement_idx").on(t.requirementId),
+  })
+);
+
+/**
+ * Master Alerts - Unified alert table for all modules
+ * Consolidates: alerts, grcAlerts
+ */
+export const masterAlerts = pgTable(
+  "master_alerts",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Classification
+    category: masterAlertCategory("category").notNull(),
+    domain: text("domain").notNull(),
+    alertType: text("alert_type").notNull(),
+
+    // Core fields
+    title: text("title").notNull(),
+    message: text("message"),
+    severity: masterAlertSeverity("severity").notNull(),
+    status: masterAlertStatus("status").notNull().default("active"),
+    source: masterAlertSource("source").notNull().default("system"),
+
+    // Entity linking
+    relatedEntityType: text("related_entity_type"),
+    relatedEntityId: uuid("related_entity_id"),
+
+    // GRC-specific
+    requirementId: uuid("requirement_id"),
+
+    // Resolution
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    autoResolved: boolean("auto_resolved").default(false),
+    resolutionReason: text("resolution_reason"),
+
+    // Expiration
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+
+    // Extended data
+    metadata: jsonb("metadata").notNull().default({}),
+
+    // Audit
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantDomain: index("master_alerts_tenant_domain_idx").on(t.tenantId, t.domain),
+    idxTenantStatus: index("master_alerts_tenant_status_idx").on(t.tenantId, t.status),
+    idxTenantSeverity: index("master_alerts_tenant_severity_idx").on(t.tenantId, t.severity),
+    idxRequirement: index("master_alerts_requirement_idx").on(t.requirementId),
+  })
+);
+
+/* ─────────────────────────────────────────────────────────────────────────────
    Generic Linking (future-proof)
    ───────────────────────────────────────────────────────────────────────────── */
 
@@ -537,12 +769,15 @@ export const parties = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     defaultCurrency: text("default_currency"),
     notes: text("notes"),
+    // Link to unified people directory (Sales & Customers Remodel)
+    personId: uuid("person_id"),
     createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     uniqCode: uniqueIndex("parties_tenant_code_uniq").on(t.tenantId, t.code),
+    idxPersonId: index("parties_tenant_person_idx").on(t.tenantId, t.personId),
   })
 );
 
@@ -1085,6 +1320,19 @@ export const salesDocs = pgTable(
     status: text("status").notNull().default("draft"), // draft, issued, approved, partially_fulfilled, fulfilled, cancelled
     notes: text("notes"),
     metadata: jsonb("metadata"),
+    // Payment tracking (Sales & Customers Remodel)
+    allocatedAmount: numeric("allocated_amount", { precision: 15, scale: 2 }).default("0"),
+    remainingAmount: numeric("remaining_amount", { precision: 15, scale: 2 }),
+    paymentStatus: text("payment_status"), // unpaid, partial, paid, overdue
+    // Document delivery tracking
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    sentMethod: text("sent_method"), // email, whatsapp, hand_delivered
+    lastReminderSentAt: timestamp("last_reminder_sent_at", { withTimezone: true }),
+    reminderCount: integer("reminder_count").default(0),
+    // Issue tracking
+    hasIssues: boolean("has_issues").default(false),
+    issueCount: integer("issue_count").default(0),
+    // Audit
     createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1093,6 +1341,7 @@ export const salesDocs = pgTable(
     uniqDocNumber: uniqueIndex("sales_docs_tenant_docnumber_uniq").on(t.tenantId, t.docNumber),
     idxParty: index("sales_docs_tenant_party_idx").on(t.tenantId, t.partyId),
     idxStatus: index("sales_docs_tenant_status_idx").on(t.tenantId, t.status),
+    idxPaymentStatus: index("sales_docs_tenant_payment_status_idx").on(t.tenantId, t.paymentStatus),
   })
 );
 
@@ -2603,6 +2852,15 @@ export const leads = pgTable(
     partyId: uuid("party_id").references(() => parties.id),
     // Converted quote/invoice
     convertedToSalesDocId: uuid("converted_to_sales_doc_id").references(() => salesDocs.id),
+    // Activity tracking (Sales & Customers Remodel)
+    personId: uuid("person_id").references(() => people.id),
+    lastActivityDate: timestamp("last_activity_date", { withTimezone: true }),
+    activityCount: integer("activity_count").default(0),
+    customerHealthScore: integer("customer_health_score"),
+    // Conversion/Loss tracking
+    convertedAt: timestamp("converted_at", { withTimezone: true }),
+    lostReason: text("lost_reason"),
+    lostAt: timestamp("lost_at", { withTimezone: true }),
     // Audit
     createdByActorId: uuid("created_by_actor_id").notNull().references(() => actors.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2612,6 +2870,9 @@ export const leads = pgTable(
     idxTenantStatus: index("leads_tenant_status_idx").on(t.tenantId, t.status),
     idxTenantAssignee: index("leads_tenant_assignee_idx").on(t.tenantId, t.assignedToUserId),
     idxTenantParty: index("leads_tenant_party_idx").on(t.tenantId, t.partyId),
+    idxTenantPerson: index("leads_tenant_person_idx").on(t.tenantId, t.personId),
+    idxTenantLastActivity: index("leads_tenant_last_activity_idx").on(t.tenantId, t.lastActivityDate),
+    idxTenantHealth: index("leads_tenant_health_idx").on(t.tenantId, t.customerHealthScore),
   })
 );
 
@@ -2837,6 +3098,56 @@ export const marketingAnalyticsCards = pgTable(
   (t) => ({
     idxTenantScope: index("marketing_analytics_cards_tenant_scope_idx").on(t.tenantId, t.scopeType),
     idxTenantPinned: index("marketing_analytics_cards_tenant_pinned_idx").on(t.tenantId, t.isPinned),
+  })
+);
+
+/**
+ * Marketing Channel Metrics - stores fetched metrics from connected platforms
+ */
+export const marketingChannelMetrics = pgTable(
+  "marketing_channel_metrics",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    channelId: uuid("channel_id").notNull().references(() => marketingChannels.id, { onDelete: "cascade" }),
+    metricType: text("metric_type").notNull(), // 'followers', 'reach', 'engagement', 'impressions', 'clicks', etc.
+    value: numeric("value", { precision: 18, scale: 4 }).notNull(),
+    previousValue: numeric("previous_value", { precision: 18, scale: 4 }), // for trend calculation
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    rawData: jsonb("raw_data").$type<Record<string, unknown>>(), // full API response for AI processing
+    fetchedAt: timestamp("fetched_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenantChannel: index("marketing_channel_metrics_tenant_channel_idx").on(t.tenantId, t.channelId),
+    idxChannelMetricPeriod: index("marketing_channel_metrics_channel_metric_period_idx").on(t.channelId, t.metricType, t.periodStart),
+    uniqChannelMetricPeriod: unique("marketing_channel_metrics_channel_metric_period_uniq").on(t.channelId, t.metricType, t.periodStart),
+  })
+);
+
+/**
+ * Marketing Channel Insights - AI-generated insights for connected channels
+ */
+export const marketingChannelInsights = pgTable(
+  "marketing_channel_insights",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    channelId: uuid("channel_id").notNull().references(() => marketingChannels.id, { onDelete: "cascade" }),
+    insightType: text("insight_type").notNull(), // 'summary', 'trend', 'recommendation', 'alert', 'comparison'
+    title: text("title"),
+    content: text("content").notNull(),
+    priority: text("priority").notNull().default("medium"), // 'high', 'medium', 'low'
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(), // additional structured data
+    generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }), // when this insight becomes stale
+    aiModel: text("ai_model"), // which AI model generated this
+    rawContext: jsonb("raw_context").$type<Record<string, unknown>>(), // input data sent to AI
+  },
+  (t) => ({
+    idxTenantChannel: index("marketing_channel_insights_tenant_channel_idx").on(t.tenantId, t.channelId),
+    idxChannelType: index("marketing_channel_insights_channel_type_idx").on(t.channelId, t.insightType),
+    idxTenantPriority: index("marketing_channel_insights_tenant_priority_idx").on(t.tenantId, t.priority),
   })
 );
 
@@ -6781,3 +7092,307 @@ export type AssetTransfer = typeof assetTransfers.$inferSelect;
 export type NewAssetTransfer = typeof assetTransfers.$inferInsert;
 export type AssetMaintenanceSchedule = typeof assetMaintenanceSchedules.$inferSelect;
 export type NewAssetMaintenanceSchedule = typeof assetMaintenanceSchedules.$inferInsert;
+
+/* ============================================================================
+   SALES & CUSTOMERS MODULE - Activity Recording & Customer Health
+   ============================================================================ */
+
+// Activity type enum for classification
+export const salesActivityType = pgEnum("sales_activity_type", [
+  "phone_call",
+  "email_sent",
+  "email_received",
+  "meeting",
+  "site_visit",
+  "quote_sent",
+  "quote_followed_up",
+  "order_received",
+  "order_confirmed",
+  "delivery_scheduled",
+  "delivery_completed",
+  "payment_reminder_sent",
+  "customer_issue",
+  "deal_won",
+  "deal_lost",
+  "note",
+]);
+
+// Activity outcome enum
+export const activityOutcome = pgEnum("activity_outcome", [
+  "connected_successful",
+  "connected_needs_followup",
+  "voicemail",
+  "no_answer",
+  "wrong_number",
+  "very_positive",
+  "positive",
+  "neutral",
+  "negative",
+  "resolved",
+  "escalated",
+  "investigating",
+  "pending_followup",
+]);
+
+// Risk level enum for customer health
+export const riskLevel = pgEnum("risk_level", [
+  "low",
+  "medium",
+  "high",
+  "critical",
+]);
+
+// Score trend enum
+export const scoreTrend = pgEnum("score_trend", [
+  "improving",
+  "stable",
+  "declining",
+]);
+
+/**
+ * Sales Activities - Log all customer interactions
+ * Every call, meeting, email, issue, etc. is recorded here
+ */
+export const salesActivities = pgTable(
+  "sales_activities",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Activity classification
+    activityType: salesActivityType("activity_type").notNull(),
+    activityDate: timestamp("activity_date", { withTimezone: true }).notNull().defaultNow(),
+
+    // Related entities
+    personId: uuid("person_id").references(() => people.id),
+    customerId: uuid("customer_id").references(() => parties.id),
+    leadId: uuid("lead_id").references(() => leads.id),
+    salesDocId: uuid("sales_doc_id").references(() => salesDocs.id),
+
+    // Activity details
+    outcome: activityOutcome("outcome"),
+    durationMinutes: integer("duration_minutes"),
+
+    // Discussion/content
+    discussionPoints: jsonb("discussion_points").$type<string[]>().default([]),
+    notes: text("notes"),
+    internalNotes: text("internal_notes"),
+
+    // Commitments
+    ourCommitments: jsonb("our_commitments").$type<Array<{ commitment: string; dueDate: string }>>().default([]),
+    theirCommitments: jsonb("their_commitments").$type<Array<{ commitment: string; dueDate: string }>>().default([]),
+
+    // Follow-up
+    nextAction: text("next_action"),
+    followUpDate: date("follow_up_date"),
+    followUpNote: text("follow_up_note"),
+
+    // Metadata & attachments
+    metadata: jsonb("metadata").default({}),
+    attachments: jsonb("attachments").$type<Array<{ documentId: string; filename: string; url: string }>>().default([]),
+
+    // Audit
+    performedByActorId: uuid("performed_by_actor_id").notNull().references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("sales_activities_tenant_idx").on(t.tenantId),
+    idxType: index("sales_activities_type_idx").on(t.tenantId, t.activityType),
+    idxPerson: index("sales_activities_person_idx").on(t.personId),
+    idxCustomer: index("sales_activities_customer_idx").on(t.customerId),
+    idxLead: index("sales_activities_lead_idx").on(t.leadId),
+    idxSalesDoc: index("sales_activities_sales_doc_idx").on(t.salesDocId),
+    idxDate: index("sales_activities_date_idx").on(t.tenantId, t.activityDate),
+    idxFollowUp: index("sales_activities_follow_up_idx").on(t.tenantId, t.followUpDate),
+  })
+);
+
+/**
+ * Customer Health Scores - Track customer engagement and risk
+ * Calculated based on payment history, activity, orders, growth, issues
+ */
+export const customerHealthScores = pgTable(
+  "customer_health_scores",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    customerId: uuid("customer_id").notNull().references(() => parties.id),
+
+    // Score components (0-100 each)
+    paymentScore: integer("payment_score").default(50),
+    engagementScore: integer("engagement_score").default(50),
+    orderFrequencyScore: integer("order_frequency_score").default(50),
+    growthScore: integer("growth_score").default(50),
+    issueScore: integer("issue_score").default(100),
+
+    // Calculated overall
+    overallScore: integer("overall_score").default(50),
+    trend: scoreTrend("score_trend").default("stable"),
+
+    // Risk flags
+    riskLevelValue: riskLevel("risk_level").default("low"),
+    riskFactors: jsonb("risk_factors").$type<string[]>().default([]),
+
+    // Metrics
+    totalOrders: integer("total_orders").default(0),
+    totalRevenue: numeric("total_revenue", { precision: 15, scale: 2 }).default("0"),
+    averageOrderValue: numeric("average_order_value", { precision: 15, scale: 2 }).default("0"),
+    daysSinceLastOrder: integer("days_since_last_order"),
+    paymentDelayDaysAvg: integer("payment_delay_days_avg").default(0),
+    issueCount30d: integer("issue_count_30d").default(0),
+
+    // Timestamps
+    calculatedAt: timestamp("calculated_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniqCustomer: uniqueIndex("customer_health_scores_tenant_customer_uniq").on(t.tenantId, t.customerId),
+    idxTenant: index("customer_health_scores_tenant_idx").on(t.tenantId),
+    idxScore: index("customer_health_scores_score_idx").on(t.tenantId, t.overallScore),
+    idxRisk: index("customer_health_scores_risk_idx").on(t.tenantId, t.riskLevelValue),
+  })
+);
+
+/**
+ * AI Sales Task Priority
+ */
+export const aiSalesTaskPriority = pgEnum("ai_sales_task_priority", ["low", "medium", "high", "critical"]);
+
+/**
+ * AI Sales Task Status
+ */
+export const aiSalesTaskStatus = pgEnum("ai_sales_task_status", ["pending", "in_progress", "completed", "dismissed", "snoozed"]);
+
+/**
+ * AI Sales Task Type
+ */
+export const aiSalesTaskType = pgEnum("ai_sales_task_type", [
+  "follow_up_lead",           // Lead hasn't been contacted in X days
+  "follow_up_quote",          // Quote sent but no response
+  "follow_up_customer",       // Customer hasn't ordered in X days
+  "payment_reminder",         // Invoice overdue
+  "at_risk_customer",         // Customer health score declining
+  "hot_lead",                 // High-value lead needs attention
+  "quote_expiring",           // Quote about to expire
+  "reactivate_customer",      // Dormant customer with past orders
+  "upsell_opportunity",       // Customer might benefit from additional products
+  "churn_prevention",         // Customer showing signs of leaving
+]);
+
+/**
+ * AI Sales Tasks - AI-generated tasks to help improve sales
+ * Generated by daily AI scan of sales data
+ */
+export const aiSalesTasks = pgTable(
+  "ai_sales_tasks",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Task classification
+    taskType: aiSalesTaskType("task_type").notNull(),
+    priority: aiSalesTaskPriority("priority").notNull().default("medium"),
+    status: aiSalesTaskStatus("status").notNull().default("pending"),
+
+    // Task content
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    aiRationale: text("ai_rationale"), // Why AI thinks this is important
+
+    // Related entities
+    customerId: uuid("customer_id").references(() => parties.id),
+    leadId: uuid("lead_id").references(() => leads.id),
+    salesDocId: uuid("sales_doc_id").references(() => salesDocs.id),
+    personId: uuid("person_id").references(() => people.id),
+
+    // Suggested actions
+    suggestedActions: jsonb("suggested_actions").$type<Array<{
+      action: string;
+      type: "call" | "email" | "meeting" | "quote" | "reminder" | "other";
+    }>>().default([]),
+
+    // Financial impact
+    potentialValue: numeric("potential_value", { precision: 15, scale: 2 }),
+    riskLevel: riskLevel("risk_level"),
+
+    // Due date and reminders
+    dueDate: date("due_date"),
+    snoozedUntil: timestamp("snoozed_until", { withTimezone: true }),
+
+    // Completion tracking
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    completedByActorId: uuid("completed_by_actor_id").references(() => actors.id),
+    completionNote: text("completion_note"),
+
+    // AI scan metadata
+    lastScanId: text("last_scan_id"), // ID of the AI scan that created/updated this
+    scanScore: integer("scan_score"), // AI confidence score 0-100
+
+    // Timestamps
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("ai_sales_tasks_tenant_idx").on(t.tenantId),
+    idxStatus: index("ai_sales_tasks_status_idx").on(t.tenantId, t.status),
+    idxPriority: index("ai_sales_tasks_priority_idx").on(t.tenantId, t.priority),
+    idxType: index("ai_sales_tasks_type_idx").on(t.tenantId, t.taskType),
+    idxCustomer: index("ai_sales_tasks_customer_idx").on(t.customerId),
+    idxLead: index("ai_sales_tasks_lead_idx").on(t.leadId),
+    idxSalesDoc: index("ai_sales_tasks_sales_doc_idx").on(t.salesDocId),
+    idxDueDate: index("ai_sales_tasks_due_date_idx").on(t.tenantId, t.dueDate),
+    // Unique constraint to prevent duplicate tasks for same entity
+    uniqEntityTask: uniqueIndex("ai_sales_tasks_entity_uniq").on(t.tenantId, t.taskType, t.customerId, t.leadId, t.salesDocId),
+  })
+);
+
+/**
+ * AI Sales Scan Log - Track when AI scans run
+ */
+export const aiSalesScanLogs = pgTable(
+  "ai_sales_scan_logs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+
+    // Scan metadata
+    scanId: text("scan_id").notNull(), // Unique scan identifier
+    triggerType: text("trigger_type").notNull(), // "scheduled" | "manual" | "webhook"
+
+    // Results
+    tasksCreated: integer("tasks_created").notNull().default(0),
+    tasksUpdated: integer("tasks_updated").notNull().default(0),
+    tasksClosed: integer("tasks_closed").notNull().default(0),
+
+    // Processing details
+    entitiesScanned: jsonb("entities_scanned").$type<{
+      customers: number;
+      leads: number;
+      quotes: number;
+      invoices: number;
+    }>().default({ customers: 0, leads: 0, quotes: 0, invoices: 0 }),
+
+    // Status
+    status: text("status").notNull().default("running"), // "running" | "completed" | "failed"
+    errorMessage: text("error_message"),
+
+    // Timestamps
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (t) => ({
+    idxTenant: index("ai_sales_scan_logs_tenant_idx").on(t.tenantId),
+    idxScanId: uniqueIndex("ai_sales_scan_logs_scan_id_uniq").on(t.scanId),
+  })
+);
+
+// Type exports for Sales & Customers Module
+export type SalesActivity = typeof salesActivities.$inferSelect;
+export type NewSalesActivity = typeof salesActivities.$inferInsert;
+export type CustomerHealthScore = typeof customerHealthScores.$inferSelect;
+export type NewCustomerHealthScore = typeof customerHealthScores.$inferInsert;
+export type AISalesTask = typeof aiSalesTasks.$inferSelect;
+export type NewAISalesTask = typeof aiSalesTasks.$inferInsert;
+export type AISalesScanLog = typeof aiSalesScanLogs.$inferSelect;
+export type NewAISalesScanLog = typeof aiSalesScanLogs.$inferInsert;

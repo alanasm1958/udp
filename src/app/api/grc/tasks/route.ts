@@ -1,24 +1,25 @@
 /**
  * /api/grc/tasks
  *
- * GET: List GRC tasks (linked to requirements)
- * POST: Create a new task
+ * GET: List GRC tasks (category='compliance')
+ * POST: Create a new compliance task
+ * Now uses master_tasks table
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
 import { db } from "@/db";
-import { grcTasks, grcRequirements, users } from "@/db/schema";
+import { masterTasks, grcRequirements, users } from "@/db/schema";
 import { eq, and, sql, desc } from "drizzle-orm";
 
 export interface GrcTaskResponse {
   id: string;
-  requirementId: string;
+  requirementId: string | null;
   requirementTitle: string;
   title: string;
   description: string | null;
   actionType: string | null;
-  status: "open" | "blocked" | "completed";
+  status: string;
   blockedReason: string | null;
   assignedTo: string | null;
   assignedToName: string | null;
@@ -43,42 +44,52 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const limit = parseInt(searchParams.get("limit") || "50", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
 
-    // Build conditions
-    const conditions = [eq(grcTasks.tenantId, tenantId)];
+    // Build conditions - filter by category='compliance' for GRC tasks
+    const conditions = [
+      eq(masterTasks.tenantId, tenantId),
+      eq(masterTasks.category, "compliance"),
+    ];
 
     if (status) {
-      conditions.push(eq(grcTasks.status, status as "open" | "blocked" | "completed"));
+      // Map legacy status values to master_task_status
+      const statusMap: Record<string, typeof masterTasks.status.enumValues[number]> = {
+        open: "open",
+        blocked: "blocked",
+        completed: "completed",
+      };
+      const mappedStatus = statusMap[status] || status;
+      conditions.push(eq(masterTasks.status, mappedStatus as typeof masterTasks.status.enumValues[number]));
     }
     if (requirementId) {
-      conditions.push(eq(grcTasks.requirementId, requirementId));
+      conditions.push(eq(masterTasks.requirementId, requirementId));
     }
     if (assignedTo) {
-      conditions.push(eq(grcTasks.assignedTo, assignedTo));
+      conditions.push(eq(masterTasks.assigneeUserId, assignedTo));
     }
 
     // Query tasks with requirement info
     const tasksData = await db
       .select({
-        id: grcTasks.id,
-        requirementId: grcTasks.requirementId,
+        id: masterTasks.id,
+        requirementId: masterTasks.requirementId,
         requirementTitle: grcRequirements.title,
-        title: grcTasks.title,
-        description: grcTasks.description,
-        actionType: grcTasks.actionType,
-        status: grcTasks.status,
-        blockedReason: grcTasks.blockedReason,
-        assignedTo: grcTasks.assignedTo,
+        title: masterTasks.title,
+        description: masterTasks.description,
+        actionType: masterTasks.actionType,
+        status: masterTasks.status,
+        blockedReason: masterTasks.blockedReason,
+        assignedTo: masterTasks.assigneeUserId,
         assignedToName: users.fullName,
-        dueDate: grcTasks.dueDate,
-        completedAt: grcTasks.completedAt,
-        autoClosed: grcTasks.autoClosed,
-        createdAt: grcTasks.createdAt,
+        dueAt: masterTasks.dueAt,
+        resolvedAt: masterTasks.resolvedAt,
+        autoResolved: masterTasks.autoResolved,
+        createdAt: masterTasks.createdAt,
       })
-      .from(grcTasks)
-      .leftJoin(grcRequirements, eq(grcTasks.requirementId, grcRequirements.id))
-      .leftJoin(users, eq(grcTasks.assignedTo, users.id))
+      .from(masterTasks)
+      .leftJoin(grcRequirements, eq(masterTasks.requirementId, grcRequirements.id))
+      .leftJoin(users, eq(masterTasks.assigneeUserId, users.id))
       .where(and(...conditions))
-      .orderBy(desc(grcTasks.createdAt))
+      .orderBy(desc(masterTasks.createdAt))
       .limit(limit)
       .offset(offset);
 
@@ -87,7 +98,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .select({
         count: sql<number>`count(*)::int`,
       })
-      .from(grcTasks)
+      .from(masterTasks)
       .where(and(...conditions));
 
     const total = countResult[0]?.count || 0;
@@ -103,9 +114,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       blockedReason: t.blockedReason,
       assignedTo: t.assignedTo,
       assignedToName: t.assignedToName,
-      dueDate: t.dueDate,
-      completedAt: t.completedAt?.toISOString() || null,
-      autoClosed: t.autoClosed || false,
+      dueDate: t.dueAt?.toISOString().split('T')[0] || null,
+      completedAt: t.resolvedAt?.toISOString() || null,
+      autoClosed: t.autoResolved || false,
       createdAt: t.createdAt.toISOString(),
     }));
 
@@ -159,22 +170,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       );
     }
 
-    // Create task
+    // Create task in master_tasks
     const [task] = await db
-      .insert(grcTasks)
+      .insert(masterTasks)
       .values({
         tenantId,
+        category: "compliance",
+        domain: "grc",
         requirementId,
         title,
         description: description || null,
         actionType: actionType || null,
-        assignedTo: assignedTo || null,
-        dueDate: dueDate || null,
+        assigneeUserId: assignedTo || null,
+        dueAt: dueDate ? new Date(dueDate) : null,
         status: "open",
+        priority: "normal",
       })
       .returning();
 
-    return NextResponse.json({ task }, { status: 201 });
+    // Return in the expected format
+    return NextResponse.json({
+      task: {
+        id: task.id,
+        tenantId: task.tenantId,
+        requirementId: task.requirementId,
+        title: task.title,
+        description: task.description,
+        actionType: task.actionType,
+        status: task.status,
+        assignedTo: task.assigneeUserId,
+        dueDate: task.dueAt?.toISOString().split('T')[0] || null,
+        createdAt: task.createdAt.toISOString(),
+      }
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof TenantError) {
       return NextResponse.json({ error: error.message }, { status: error.statusCode });

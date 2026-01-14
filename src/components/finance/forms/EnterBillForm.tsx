@@ -86,7 +86,12 @@ export default function EnterBillForm({ onBack, onSuccess }: EnterBillFormProps)
       const res = await fetch("/api/master/parties?type=vendor&limit=100");
       if (res.ok) {
         const data = await res.json();
-        setVendors(data.parties || []);
+        // Map API response fields to expected format
+        setVendors((data.items || []).map((p: { id: string; displayName: string; code: string | null }) => ({
+          id: p.id,
+          name: p.displayName,
+          code: p.code,
+        })));
       }
     } catch (error) {
       console.error("Error loading vendors:", error);

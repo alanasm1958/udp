@@ -75,7 +75,11 @@ export default function AddProductForm({ onBack, onSuccess, itemType }: AddProdu
       const res = await fetch("/api/master/parties?type=vendor");
       if (res.ok) {
         const data = await res.json();
-        setVendors(data.parties || []);
+        // Map API response fields to expected format
+        setVendors((data.items || []).map((p: { id: string; displayName: string }) => ({
+          id: p.id,
+          name: p.displayName,
+        })));
       }
     } catch (error) {
       console.error("Error loading vendors:", error);
