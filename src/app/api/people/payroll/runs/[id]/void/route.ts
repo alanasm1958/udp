@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { payrollRunsV2, payrollRunLines, journalEntries, journalLines, reversalLinks, hrAuditLog } from "@/db/schema";
+import { payrollRunsV2, payrollRunLines, hrAuditLog } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -16,6 +16,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { reverseJournalEntry } from "@/lib/posting";
 
 interface VoidRequest {
   reason: string;
@@ -71,51 +72,23 @@ export async function POST(
       );
     }
 
-    // Get original journal lines
-    const originalLines = await db
-      .select()
-      .from(journalLines)
-      .where(eq(journalLines.journalEntryId, run.journalEntryId));
+    // Use posting service to create reversal journal entry
+    const reversalResult = await reverseJournalEntry({
+      tenantId,
+      actorId: actor.actorId,
+      originalJournalEntryId: run.journalEntryId,
+      reason: body.reason,
+      memo: `VOID - Payroll reversal for ${run.periodStart} to ${run.periodEnd}: ${body.reason}`,
+    });
 
-    if (originalLines.length === 0) {
+    if (!reversalResult.success) {
       return NextResponse.json(
-        { error: "Original journal entry has no lines" },
+        { error: reversalResult.error || "Failed to create reversal" },
         { status: 400 }
       );
     }
 
-    // Create reversal journal entry
-    const [reversalEntry] = await db
-      .insert(journalEntries)
-      .values({
-        tenantId,
-        postingDate: new Date().toISOString().split("T")[0],
-        memo: `VOID - Payroll reversal for ${run.periodStart} to ${run.periodEnd}: ${body.reason}`,
-        postedByActorId: actor.actorId,
-      })
-      .returning();
-
-    // Create reversed journal lines (swap debit/credit)
-    const reversedLines = originalLines.map((line, index) => ({
-      tenantId,
-      journalEntryId: reversalEntry.id,
-      lineNo: index + 1,
-      accountId: line.accountId,
-      debit: line.credit, // Swap
-      credit: line.debit, // Swap
-      description: `VOID - ${line.description}`,
-    }));
-
-    await db.insert(journalLines).values(reversedLines);
-
-    // Create reversal link
-    await db.insert(reversalLinks).values({
-      tenantId,
-      originalJournalEntryId: run.journalEntryId,
-      reversalJournalEntryId: reversalEntry.id,
-      reason: body.reason,
-      createdByActorId: actor.actorId,
-    });
+    const reversalJournalEntryId = reversalResult.reversalJournalEntryId!;
 
     // Update payroll run status
     await db
@@ -150,24 +123,24 @@ export async function POST(
       afterSnapshot: {
         status: "voided",
         voidReason: body.reason,
-        reversalJournalEntryId: reversalEntry.id,
+        reversalJournalEntryId,
       },
     });
 
     await audit.log("payroll_run", runId, "payroll_run_voided", {
       reason: body.reason,
       originalJournalEntryId: run.journalEntryId,
-      reversalJournalEntryId: reversalEntry.id,
+      reversalJournalEntryId,
     });
 
     return NextResponse.json({
       success: true,
       message: "Payroll run voided successfully",
-      reversalJournalEntryId: reversalEntry.id,
+      reversalJournalEntryId,
       summary: {
         voidReason: body.reason,
         originalJournalEntryId: run.journalEntryId,
-        reversalJournalEntryId: reversalEntry.id,
+        reversalJournalEntryId,
         employeesAffected: parseInt(String(lineCount[0]?.count || 0)),
       },
     });

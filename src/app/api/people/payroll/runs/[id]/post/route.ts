@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { payrollRunsV2, payrollRunLines, journalEntries, journalLines, accounts, hrAuditLog } from "@/db/schema";
+import { payrollRunsV2, payrollRunLines, accounts, hrAuditLog } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import {
   requireTenantIdFromHeaders,
@@ -16,6 +16,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 /**
  * POST /api/people/payroll/runs/[id]/post
@@ -103,56 +104,40 @@ export async function POST(
 
     const accountMap = Object.fromEntries(accountsResult.map(a => [a.code, a.id]));
 
-    // Create journal entry
-    const [journalEntry] = await db
-      .insert(journalEntries)
-      .values({
-        tenantId,
-        postingDate: run.payDate,
-        memo: `Payroll for ${run.periodStart} to ${run.periodEnd}`,
-        postedByActorId: actor.actorId,
-      })
-      .returning();
-
-    // Create journal lines
-    const journalLinesData = [];
-    let lineNo = 1;
+    // Build journal lines for posting service
+    const postingLines: Array<{
+      accountId: string;
+      debit: number;
+      credit: number;
+      description?: string;
+    }> = [];
 
     // Debit: Salary Expense (gross pay + employer contributions)
     if (accountMap[accountCodes.salaryExpense]) {
-      journalLinesData.push({
-        tenantId,
-        journalEntryId: journalEntry.id,
-        lineNo: lineNo++,
+      postingLines.push({
         accountId: accountMap[accountCodes.salaryExpense],
-        debit: String(totals.totalEmployerCost),
-        credit: "0",
+        debit: totals.totalEmployerCost,
+        credit: 0,
         description: "Payroll - Gross Pay & Employer Costs",
       });
     }
 
     // Credit: Payroll Tax Payable (employee taxes + employer tax contributions)
     if (accountMap[accountCodes.taxPayable] && totals.totalTaxes > 0) {
-      journalLinesData.push({
-        tenantId,
-        journalEntryId: journalEntry.id,
-        lineNo: lineNo++,
+      postingLines.push({
         accountId: accountMap[accountCodes.taxPayable],
-        debit: "0",
-        credit: String(totals.totalTaxes),
+        debit: 0,
+        credit: totals.totalTaxes,
         description: "Payroll - Tax Withholdings",
       });
     }
 
     // Credit: Deductions Payable (benefits, etc.)
     if (accountMap[accountCodes.deductionsPayable] && totals.totalDeductions > 0) {
-      journalLinesData.push({
-        tenantId,
-        journalEntryId: journalEntry.id,
-        lineNo: lineNo++,
+      postingLines.push({
         accountId: accountMap[accountCodes.deductionsPayable],
-        debit: "0",
-        credit: String(totals.totalDeductions),
+        debit: 0,
+        credit: totals.totalDeductions,
         description: "Payroll - Deductions",
       });
     }
@@ -161,27 +146,36 @@ export async function POST(
     if (accountMap[accountCodes.cashOrPayable]) {
       const employerNonTax = totals.totalEmployerCost - totals.grossPay;
       const cashCredit = totals.netPay + employerNonTax;
-      journalLinesData.push({
-        tenantId,
-        journalEntryId: journalEntry.id,
-        lineNo: lineNo++,
+      postingLines.push({
         accountId: accountMap[accountCodes.cashOrPayable],
-        debit: "0",
-        credit: String(cashCredit),
+        debit: 0,
+        credit: cashCredit,
         description: "Payroll - Net Pay",
       });
     }
 
-    if (journalLinesData.length > 0) {
-      await db.insert(journalLines).values(journalLinesData);
+    // Use posting service for ledger writes
+    const result = await createSimpleLedgerEntry({
+      tenantId,
+      actorId: actor.actorId,
+      postingDate: run.payDate,
+      memo: `Payroll for ${run.periodStart} to ${run.periodEnd}`,
+      source: "payroll",
+      lines: postingLines,
+    });
+
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
+
+    const journalEntryId = result.journalEntryId!;
 
     // Update payroll run status
     await db
       .update(payrollRunsV2)
       .set({
         status: "posted",
-        journalEntryId: journalEntry.id,
+        journalEntryId,
         postedAt: new Date(),
         postedByActorId: actor.actorId,
         updatedAt: new Date(),
@@ -197,14 +191,14 @@ export async function POST(
       entityId: runId,
       action: "posted",
       afterSnapshot: {
-        journalEntryId: journalEntry.id,
+        journalEntryId,
         totals,
         linesPosted: lines.length,
       },
     });
 
     await audit.log("payroll_run", runId, "payroll_run_posted", {
-      journalEntryId: journalEntry.id,
+      journalEntryId,
       totals,
       linesPosted: lines.length,
     });
@@ -212,7 +206,7 @@ export async function POST(
     return NextResponse.json({
       success: true,
       message: `Payroll posted successfully with ${lines.length} employees`,
-      journalEntryId: journalEntry.id,
+      journalEntryId,
       summary: {
         employeeCount: lines.length,
         ...totals,

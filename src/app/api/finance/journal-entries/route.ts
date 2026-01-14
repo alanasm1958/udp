@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { journalEntries, journalLines, accounts } from "@/db/schema";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 export async function GET(request: NextRequest) {
   try {
@@ -118,37 +119,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create journal entry using actual schema - let database generate the ID
-    const [insertedEntry] = await db.insert(journalEntries).values({
+    // Build lines for posting service
+    const postingLines = lines
+      .filter((line: any) => line.accountId && (parseFloat(line.debit || 0) !== 0 || parseFloat(line.credit || 0) !== 0))
+      .map((line: any) => ({
+        accountId: line.accountId,
+        debit: parseFloat(line.debit) || 0,
+        credit: parseFloat(line.credit) || 0,
+        description: line.description || undefined,
+      }));
+
+    // Use posting service for ledger writes
+    const result = await createSimpleLedgerEntry({
       tenantId,
+      actorId,
       postingDate: postingDate || new Date().toISOString().split("T")[0],
       memo: memo || "Manual journal entry",
-      postedByActorId: actorId,
-      postedAt: new Date(),
-    }).returning({ id: journalEntries.id });
+      source: "manual",
+      lines: postingLines,
+    });
 
-    const entryId = insertedEntry.id;
-
-    // Create journal lines
-    let lineNo = 1;
-    for (const line of lines) {
-      if (!line.accountId) continue;
-      if (parseFloat(line.debit || 0) === 0 && parseFloat(line.credit || 0) === 0) continue;
-
-      await db.insert(journalLines).values({
-        tenantId,
-        journalEntryId: entryId,
-        lineNo: lineNo++,
-        accountId: line.accountId,
-        description: line.description || null,
-        debit: (parseFloat(line.debit) || 0).toString(),
-        credit: (parseFloat(line.credit) || 0).toString(),
-      });
+    if (!result.success) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
     return NextResponse.json({
       success: true,
-      entryId,
+      entryId: result.journalEntryId,
     });
   } catch (error) {
     if (error instanceof TenantError) {

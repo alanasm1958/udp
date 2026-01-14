@@ -15,7 +15,24 @@ const SCHEMA_PATH = path.resolve(__dirname, "../../src/db/schema.ts");
 // Tables that are explicitly allowed to NOT have tenant_id
 // - tenants: the tenant table itself has id, not tenant_id
 // - subscription_plans: global SaaS plans shared across all tenants
-const ALLOWED_EXCEPTIONS = ["tenants", "subscription_plans"];
+// - permissions: system-wide permission definitions (codes like 'finance:create')
+// - jurisdictions: global reference data for countries/states/localities
+// - compliance_rule_sets: legal/regulatory rules per jurisdiction (shared reference data)
+// - tax_tables: tax rates per jurisdiction (federal, state, local - shared reference data)
+// - tax_brackets: progressive tax brackets (belongs to tax_tables - shared reference data)
+// - deduction_types: standard deduction categories (401k, health, etc. - shared reference data)
+// - earning_types: standard earning categories (salary, overtime, etc. - shared reference data)
+const ALLOWED_EXCEPTIONS = [
+  "tenants",
+  "subscription_plans",
+  "permissions",
+  "jurisdictions",
+  "compliance_rule_sets",
+  "tax_tables",
+  "tax_brackets",
+  "deduction_types",
+  "earning_types",
+];
 
 function main() {
   console.log("🔍 Checking tenant scope in schema...\n");

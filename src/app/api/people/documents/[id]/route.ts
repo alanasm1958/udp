@@ -280,14 +280,16 @@ export async function DELETE(
       return NextResponse.json({ error: "Document not found" }, { status: 404 });
     }
 
-    // Delete links first
+    // Soft delete links first
     await db
-      .delete(documentLinks)
+      .update(documentLinks)
+      .set({ deletedAt: new Date() })
       .where(and(eq(documentLinks.tenantId, tenantId), eq(documentLinks.documentId, id)));
 
-    // Delete document
+    // Soft delete document
     await db
-      .delete(documents)
+      .update(documents)
+      .set({ deletedAt: new Date() })
       .where(and(eq(documents.tenantId, tenantId), eq(documents.id, id)));
 
     await audit.log("document", id, "document_uploaded", {

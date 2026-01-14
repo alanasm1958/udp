@@ -12,9 +12,6 @@ import {
   payrollGlMappings,
   payPeriods,
   accounts,
-  journalEntries,
-  journalLines,
-  transactionSets,
 } from "@/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import {
@@ -25,6 +22,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { createSimpleLedgerEntry } from "@/lib/posting";
 
 function isValidUuid(str: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -207,53 +205,24 @@ export async function POST(
         });
       }
 
-      // Validate balance
-      const totalDebits = lines.reduce((sum, l) => sum + l.debit, 0);
-      const totalCredits = lines.reduce((sum, l) => sum + l.credit, 0);
-
-      if (Math.abs(totalDebits - totalCredits) > 0.01) {
-        throw new Error(
-          `Payroll journal entry is not balanced: debits (${totalDebits.toFixed(2)}) ≠ credits (${totalCredits.toFixed(2)})`
-        );
-      }
-
-      // Create transaction set
-      const [txSet] = await db
-        .insert(transactionSets)
-        .values({
-          tenantId,
-          status: "posted",
-          source: "payroll_posting",
-          createdByActorId: actor.actorId,
-          businessDate: run.payDate,
-          notes: `Payroll posting: ${run.periodStart} to ${run.periodEnd}`,
-        })
-        .returning();
-
-      // Create journal entry
-      const [journalEntry] = await db
-        .insert(journalEntries)
-        .values({
-          tenantId,
-          postingDate: run.payDate,
-          memo: `Payroll: ${run.periodStart} to ${run.periodEnd} (${run.employeeCount} employees)`,
-          sourceTransactionSetId: txSet.id,
-          postedByActorId: actor.actorId,
-        })
-        .returning();
-
-      // Create journal lines
-      await db.insert(journalLines).values(
-        lines.map((line, index) => ({
-          tenantId,
-          journalEntryId: journalEntry.id,
-          lineNo: index + 1,
+      // Use posting service for ledger writes
+      const result = await createSimpleLedgerEntry({
+        tenantId,
+        actorId: actor.actorId,
+        postingDate: run.payDate,
+        memo: `Payroll: ${run.periodStart} to ${run.periodEnd} (${run.employeeCount} employees)`,
+        source: "payroll",
+        lines: lines.map((line) => ({
           accountId: line.accountId,
-          debit: line.debit.toFixed(6),
-          credit: line.credit.toFixed(6),
+          debit: line.debit,
+          credit: line.credit,
           description: line.description,
-        }))
-      );
+        })),
+      });
+
+      if (!result.success) {
+        throw new Error(result.error || "Failed to create ledger entry");
+      }
 
       // Update payroll run status to posted
       await db
@@ -262,14 +231,17 @@ export async function POST(
           status: "posted",
           postedAt: sql`now()`,
           postedByActorId: actor.actorId,
-          journalEntryId: journalEntry.id,
+          journalEntryId: result.journalEntryId!,
           updatedAt: sql`now()`,
         })
         .where(eq(payrollRuns.id, id));
 
+      const totalDebits = lines.reduce((sum, l) => sum + l.debit, 0);
+      const totalCredits = lines.reduce((sum, l) => sum + l.credit, 0);
+
       await audit.log("payroll_run", id, "payroll_posted", {
-        journalEntryId: journalEntry.id,
-        transactionSetId: txSet.id,
+        journalEntryId: result.journalEntryId,
+        transactionSetId: result.transactionSetId,
         totalDebits: totalDebits.toFixed(2),
         totalCredits: totalCredits.toFixed(2),
         lineCount: lines.length,
@@ -278,8 +250,8 @@ export async function POST(
       return NextResponse.json({
         success: true,
         status: "posted",
-        journalEntryId: journalEntry.id,
-        transactionSetId: txSet.id,
+        journalEntryId: result.journalEntryId,
+        transactionSetId: result.transactionSetId,
       });
     } catch (postError) {
       // Revert status on error

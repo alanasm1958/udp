@@ -197,6 +197,7 @@ export const documents = pgTable("documents", {
   rejectionReason: text("rejection_reason"),
   notes: text("notes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
 });
 
 export const documentExtractions = pgTable("document_extractions", {
@@ -219,6 +220,7 @@ export const documentLinks = pgTable(
     entityId: uuid("entity_id").notNull(),
     linkType: text("link_type").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => ({
     uniq: uniqueIndex("document_links_uniq").on(t.tenantId, t.documentId, t.entityType, t.entityId, t.linkType),
