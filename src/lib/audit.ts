@@ -101,6 +101,7 @@ export type AuditAction =
   | "user_deactivated"
   | "user_activated"
   | "user_roles_changed"
+  | "role_permissions_updated"
   // Planner
   | "planner_initiative_created"
   | "planner_initiative_updated"
