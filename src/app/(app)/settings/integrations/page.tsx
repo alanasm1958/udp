@@ -177,9 +177,11 @@ export default function IntegrationsSettingsPage() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-white">{provider.name}</h3>
-                    <GlassBadge variant={provider.configured ? "success" : "default"} className="mt-1">
-                      {provider.configured ? "Configured" : "Not Configured"}
-                    </GlassBadge>
+                    <div className="mt-1">
+                      <GlassBadge variant={provider.configured ? "success" : "default"}>
+                        {provider.configured ? "Configured" : "Not Configured"}
+                      </GlassBadge>
+                    </div>
                   </div>
                 </div>
               </div>
