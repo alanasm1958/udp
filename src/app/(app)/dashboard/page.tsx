@@ -148,6 +148,7 @@ const priorityColors = {
   critical: "danger",
   urgent: "danger",
   high: "warning",
+  medium: "warning",
   normal: "info",
   low: "default",
 } as const;
@@ -655,7 +656,7 @@ function DashboardContent() {
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-white/40 capitalize">{card.domain}</span>
-                  <GlassBadge variant={priorityColors[card.priority]}>
+                  <GlassBadge variant={priorityColors[card.priority as keyof typeof priorityColors] || "default"}>
                     {card.priority}
                   </GlassBadge>
                 </div>
