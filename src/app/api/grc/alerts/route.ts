@@ -45,7 +45,7 @@ export interface Alert {
   requirementId?: string;
   requirementTitle?: string;
   alertType?: string;
-  status?: "active" | "resolved";
+  status?: "active" | "dismissed" | "acknowledged" | "resolved";
 }
 
 function getDaysSince(dateStr: string): number {
