@@ -4,16 +4,18 @@ import { accounts } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
 
+type AccountType = "asset" | "liability" | "equity" | "income" | "expense";
+
 export async function GET(request: NextRequest) {
   try {
     const tenantId = requireTenantIdFromHeaders(request);
     const { searchParams } = new URL(request.url);
-    const type = searchParams.get("type");
+    const type = searchParams.get("type") as AccountType | null;
     const limit = parseInt(searchParams.get("limit") || "100");
 
     const conditions = [eq(accounts.tenantId, tenantId)];
     if (type) {
-      conditions.push(eq(accounts.type, type as any));
+      conditions.push(eq(accounts.type, type));
     }
 
     const accountsList = await db

@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { journalEntries, journalLines, accounts } from "@/db/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
 import { createSimpleLedgerEntry } from "@/lib/posting";
+
+interface JournalLineInput {
+  accountId?: string;
+  debit?: string | number;
+  credit?: string | number;
+  description?: string;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -103,12 +110,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate balance
-    const totalDebit = lines.reduce(
-      (sum: number, line: any) => sum + (parseFloat(line.debit) || 0),
+    const totalDebit = (lines as JournalLineInput[]).reduce(
+      (sum: number, line) => sum + (parseFloat(String(line.debit ?? 0)) || 0),
       0
     );
-    const totalCredit = lines.reduce(
-      (sum: number, line: any) => sum + (parseFloat(line.credit) || 0),
+    const totalCredit = (lines as JournalLineInput[]).reduce(
+      (sum: number, line) => sum + (parseFloat(String(line.credit ?? 0)) || 0),
       0
     );
 
@@ -120,12 +127,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Build lines for posting service
-    const postingLines = lines
-      .filter((line: any) => line.accountId && (parseFloat(line.debit || 0) !== 0 || parseFloat(line.credit || 0) !== 0))
-      .map((line: any) => ({
-        accountId: line.accountId,
-        debit: parseFloat(line.debit) || 0,
-        credit: parseFloat(line.credit) || 0,
+    const postingLines = (lines as JournalLineInput[])
+      .filter((line) => line.accountId && (parseFloat(String(line.debit ?? 0)) !== 0 || parseFloat(String(line.credit ?? 0)) !== 0))
+      .map((line) => ({
+        accountId: line.accountId!,
+        debit: parseFloat(String(line.debit ?? 0)) || 0,
+        credit: parseFloat(String(line.credit ?? 0)) || 0,
         description: line.description || undefined,
       }));
 

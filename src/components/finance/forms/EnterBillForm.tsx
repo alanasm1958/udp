@@ -396,7 +396,7 @@ export default function EnterBillForm({ onBack, onSuccess }: EnterBillFormProps)
             }`}
             onClick={() => setPaymentPlan("later")}
           >
-            <p className="font-medium">I'll decide later</p>
+            <p className="font-medium">I&apos;ll decide later</p>
             <p className="text-xs text-white/50">Just record the bill for now</p>
           </GlassCard>
         </div>
@@ -425,7 +425,7 @@ export default function EnterBillForm({ onBack, onSuccess }: EnterBillFormProps)
             <span className="font-medium">{selectedVendor?.name}</span> will be recorded.
           </p>
           <p className="text-sm text-white/50 mt-2">
-            It will show in this month's expenses. You'll owe {selectedVendor?.name} ${getTotal().toLocaleString()} until you pay.
+            It will show in this month&apos;s expenses. You&apos;ll owe {selectedVendor?.name} ${getTotal().toLocaleString()} until you pay.
           </p>
           {paymentPlan === "schedule" && dueDate && (
             <p className="text-sm text-green-400 mt-2">

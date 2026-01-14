@@ -374,12 +374,12 @@ export default function CreateInvoiceForm({ onBack, onSuccess }: CreateInvoiceFo
             What this creates
           </h4>
           <p className="text-sm text-white/70">
-            You're billing <span className="font-medium">{selectedCustomer?.name}</span> for{" "}
+            You&apos;re billing <span className="font-medium">{selectedCustomer?.name}</span> for{" "}
             <span className="text-blue-400 font-medium">${getTotal().toLocaleString()}</span>.
             They should pay by {new Date(dueDate).toLocaleDateString()}.
           </p>
           <p className="text-sm text-white/50 mt-2">
-            This will show as 'Sales' in your books. They'll owe you ${getTotal().toLocaleString()} until they pay.
+            This will show as &apos;Sales&apos; in your books. They&apos;ll owe you ${getTotal().toLocaleString()} until they pay.
           </p>
         </GlassCard>
       )}

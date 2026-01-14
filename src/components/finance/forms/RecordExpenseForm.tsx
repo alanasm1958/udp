@@ -322,9 +322,9 @@ export default function RecordExpenseForm({ onBack, onSuccess }: RecordExpenseFo
           </h4>
           <p className="text-sm text-white/70">
             This <span className="text-orange-400 font-medium">${parseFloat(amount).toLocaleString()}</span> expense
-            {description && <> for "{description}"</>}
+            {description && <> for &quot;{description}&quot;</>}
             {vendor && <> from {vendor}</>}
-            {" "}will show in this month's profit/loss report.
+            {" "}will show in this month&apos;s profit/loss report.
           </p>
           {paidBy === "employee" && (
             <p className="text-sm text-yellow-400 mt-2">
