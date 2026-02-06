@@ -6,7 +6,15 @@
 import { SignJWT, jwtVerify, type JWTPayload } from "jose";
 import { cookies } from "next/headers";
 
-const AUTH_SECRET = process.env.AUTH_SECRET || "dev-secret-change-in-production";
+function getAuthSecret(): string {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret && process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET environment variable is required in production");
+  }
+  return secret || "dev-secret-change-in-production";
+}
+
+const AUTH_SECRET = getAuthSecret();
 const COOKIE_NAME = "udp_session";
 const TOKEN_EXPIRY = "7d";
 

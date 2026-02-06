@@ -1,12 +1,17 @@
 /**
  * Next.js Middleware
- * Handles authentication and subscription enforcement
+ * Handles authentication, subscription enforcement, and RBAC page access
  */
 
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSessionTokenFromRequest, verifySessionToken } from "@/lib/auth";
 import { checkSubscriptionAccess } from "@/lib/entitlements";
+import { checkPageAccessByRoute } from "@/lib/rbac-access";
+import { checkRateLimit, rateLimitedResponse, getClientIp, AUTH_RATE_LIMIT } from "@/lib/rate-limit";
+
+// Rate-limited auth paths
+const RATE_LIMITED_AUTH_PATHS = ["/api/auth/login", "/api/auth/signup"];
 
 // Paths that don't require authentication
 const PUBLIC_PATHS = [
@@ -30,6 +35,18 @@ const SUBSCRIPTION_EXEMPT_PATHS = [
   "/api/billing/",
   "/api/auth/",
   "/api/admin/", // Admin routes use role-based auth, not subscription
+  "/tenant-management", // Platform owner routes
+  "/api/tenant-management/", // Platform owner API
+];
+
+// Paths that are exempt from RBAC page access check
+// (always accessible or handled by other mechanisms)
+const RBAC_EXEMPT_PATHS = [
+  "/dashboard", // Always accessible
+  "/settings/tenant", // Always accessible
+  "/billing", // Handled by subscription check
+  "/api/", // API routes handle their own auth
+  "/tenant-management", // Platform owner only (checked separately)
 ];
 
 // Check if path is public
@@ -40,6 +57,11 @@ function isPublicPath(pathname: string): boolean {
 // Check if path is exempt from subscription check
 function isSubscriptionExempt(pathname: string): boolean {
   return SUBSCRIPTION_EXEMPT_PATHS.some((path) => pathname.startsWith(path));
+}
+
+// Check if path is exempt from RBAC page access check
+function isRbacExempt(pathname: string): boolean {
+  return RBAC_EXEMPT_PATHS.some((path) => pathname.startsWith(path));
 }
 
 // Check if path is an API route
@@ -59,6 +81,14 @@ function isAdminRoute(pathname: string): boolean {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const method = request.method;
+
+  // Rate limit auth endpoints before any other processing
+  if (RATE_LIMITED_AUTH_PATHS.some((path) => pathname === path) && method === "POST") {
+    const ip = getClientIp(request);
+    if (!checkRateLimit(`auth:${ip}`, AUTH_RATE_LIMIT)) {
+      return rateLimitedResponse();
+    }
+  }
 
   // Allow public paths
   if (isPublicPath(pathname)) {
@@ -164,6 +194,21 @@ export async function middleware(request: NextRequest) {
     // Inject subscription info into headers for downstream use
     requestHeaders.set("x-subscription-plan", subCheck.planCode || "");
     requestHeaders.set("x-subscription-active", subCheck.isActive.toString());
+  }
+
+  // RBAC Page Access Check (only for non-API, non-exempt page routes)
+  // Skip for admins as they have full access
+  if (!isApiRoute(pathname) && !isRbacExempt(pathname) && !session.roles.includes("admin")) {
+    const pageAccess = await checkPageAccessByRoute(
+      session.tenantId,
+      session.userId,
+      pathname
+    );
+
+    if (!pageAccess.hasAccess) {
+      // User doesn't have access to this page - redirect to dashboard
+      return NextResponse.redirect(new URL("/dashboard?access_denied=1", request.url));
+    }
   }
 
   // Continue with the modified headers

@@ -41,12 +41,27 @@ export const accountType = pgEnum("account_type", [
 ]);
 
 /* Tenants */
-export const tenants = pgTable("tenants", {
-  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  baseCurrency: text("base_currency").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const tenants = pgTable(
+  "tenants",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    baseCurrency: text("base_currency").notNull(),
+    // Platform owner & status fields for tenant management
+    isPlatformOwner: boolean("is_platform_owner").notNull().default(false),
+    status: text("status").notNull().default("active"), // 'active', 'suspended', 'archived'
+    suspendedAt: timestamp("suspended_at", { withTimezone: true }),
+    suspendedReason: text("suspended_reason"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxPlatformOwner: index("idx_tenants_platform_owner").on(t.isPlatformOwner),
+    idxStatus: index("idx_tenants_status").on(t.status),
+  })
+);
 
 /* Users (one tenant per user) */
 export const users = pgTable(
@@ -59,6 +74,7 @@ export const users = pgTable(
     passwordHash: text("password_hash"),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
     uniqTenantEmail: uniqueIndex("users_tenant_email_uniq").on(t.tenantId, t.email),
@@ -83,6 +99,27 @@ export const userRoles = pgTable(
   },
   (t) => ({
     uniq: uniqueIndex("user_roles_uniq").on(t.tenantId, t.userId, t.roleId),
+  }),
+);
+
+/* Sessions - for token revocation and session management */
+export const sessions = pgTable(
+  "sessions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id),
+    userId: uuid("user_id").notNull().references(() => users.id),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    userAgent: text("user_agent"),
+    ipAddress: text("ip_address"),
+  },
+  (t) => ({
+    idxUserId: index("idx_sessions_user_id").on(t.userId),
+    idxTokenHash: uniqueIndex("idx_sessions_token_hash").on(t.tokenHash),
+    idxExpiresAt: index("idx_sessions_expires_at").on(t.expiresAt),
   }),
 );
 
@@ -2533,6 +2570,132 @@ export const subscriptionEvents = pgTable(
   (t) => ({
     idxTenant: index("subscription_events_tenant_idx").on(t.tenantId),
     idxType: index("subscription_events_type_idx").on(t.type),
+  })
+);
+
+/* ============================================================================
+   TENANT MANAGEMENT & GRANULAR RBAC TABLES
+   ============================================================================ */
+
+/**
+ * Pages - Global reference table for all pages/routes in the application
+ * Used for page-level access control
+ */
+export const pages = pgTable(
+  "pages",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    code: text("code").notNull().unique(), // e.g., 'finance-payments', 'sales-detail'
+    name: text("name").notNull(), // e.g., 'Payments', 'Sales Document Detail'
+    route: text("route").notNull(), // e.g., '/finance/payments', '/sales/[id]'
+    module: text("module").notNull(), // e.g., 'finance', 'sales', 'hr'
+    description: text("description"),
+    icon: text("icon"),
+    isAlwaysAccessible: boolean("is_always_accessible").notNull().default(false),
+    displayOrder: integer("display_order").notNull().default(0),
+    parentPageCode: text("parent_page_code"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxModule: index("idx_pages_module").on(t.module),
+    idxParent: index("idx_pages_parent").on(t.parentPageCode),
+  })
+);
+
+/**
+ * Page Actions - Global reference table for actions/forms on each page
+ * Used for action-level access control within pages
+ */
+export const pageActions = pgTable(
+  "page_actions",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    pageId: uuid("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    code: text("code").notNull(), // e.g., 'create-payment', 'post-payment'
+    name: text("name").notNull(), // e.g., 'Create Payment', 'Post Payment'
+    description: text("description"),
+    actionType: text("action_type").notNull().default("button"), // 'button', 'form', 'link', 'modal'
+    requiresPermission: text("requires_permission"), // Links to existing permission code
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    pageCodeUniq: uniqueIndex("page_actions_page_code_uniq").on(t.pageId, t.code),
+    idxPage: index("idx_page_actions_page").on(t.pageId),
+  })
+);
+
+/**
+ * User Page Access - Per-user, per-page access control (tenant-scoped)
+ * Determines which pages a user can see
+ */
+export const userPageAccess = pgTable(
+  "user_page_access",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    pageId: uuid("page_id").notNull().references(() => pages.id, { onDelete: "cascade" }),
+    hasAccess: boolean("has_access").notNull().default(true),
+    grantedByActorId: uuid("granted_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: uniqueIndex("user_page_access_uniq").on(t.tenantId, t.userId, t.pageId),
+    idxLookup: index("idx_user_page_access_lookup").on(t.tenantId, t.userId),
+    idxPage: index("idx_user_page_access_page").on(t.pageId),
+  })
+);
+
+/**
+ * User Action Access - Per-user, per-action access control (tenant-scoped)
+ * Determines which actions/forms a user can use within a page
+ */
+export const userActionAccess = pgTable(
+  "user_action_access",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    actionId: uuid("action_id").notNull().references(() => pageActions.id, { onDelete: "cascade" }),
+    hasAccess: boolean("has_access").notNull().default(true),
+    grantedByActorId: uuid("granted_by_actor_id").references(() => actors.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    uniq: uniqueIndex("user_action_access_uniq").on(t.tenantId, t.userId, t.actionId),
+    idxLookup: index("idx_user_action_access_lookup").on(t.tenantId, t.userId),
+    idxAction: index("idx_user_action_access_action").on(t.actionId),
+  })
+);
+
+/**
+ * Tenant Payment History - For platform owner monitoring
+ * Tracks all payment transactions across tenants
+ */
+export const tenantPaymentHistory = pgTable(
+  "tenant_payment_history",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    tenantId: uuid("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+    amount: numeric("amount", { precision: 12, scale: 2 }).notNull(),
+    currency: text("currency").notNull().default("USD"),
+    status: text("status").notNull(), // 'succeeded', 'failed', 'pending', 'refunded'
+    paymentMethod: text("payment_method"),
+    stripePaymentIntentId: text("stripe_payment_intent_id"),
+    stripeInvoiceId: text("stripe_invoice_id"),
+    description: text("description"),
+    periodStart: timestamp("period_start", { withTimezone: true }),
+    periodEnd: timestamp("period_end", { withTimezone: true }),
+    metadata: jsonb("metadata").default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    idxTenant: index("idx_tenant_payments_tenant").on(t.tenantId),
+    idxStatus: index("idx_tenant_payments_status").on(t.status),
+    idxCreated: index("idx_tenant_payments_created").on(t.createdAt),
   })
 );
 

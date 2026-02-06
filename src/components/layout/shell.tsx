@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 import { CopilotSidebar } from "@/components/ai/CopilotSidebar";
 import { OmniWindow } from "@/components/ai/OmniWindow";
+import { useRbac } from "@/lib/rbac-context";
 
 interface NavItem {
   label: string;
@@ -12,6 +13,7 @@ interface NavItem {
   icon: React.ReactNode;
   children?: { label: string; href: string }[];
   adminOnly?: boolean;
+  platformOwnerOnly?: boolean;
 }
 
 interface UserInfo {
@@ -22,6 +24,7 @@ interface UserInfo {
   tenant?: {
     id: string;
     name: string;
+    isPlatformOwner?: boolean;
   };
 }
 
@@ -116,6 +119,17 @@ const navigation: NavItem[] = [
       </svg>
     ),
   },
+  // 10. Tenant Management (Platform Owner Only)
+  {
+    label: "Tenants",
+    href: "/tenant-management",
+    icon: (
+      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008zm0 3h.008v.008h-.008v-.008z" />
+      </svg>
+    ),
+    platformOwnerOnly: true,
+  },
 ];
 
 const SIDEBAR_OPEN_KEY = "udp-sidebar-open";
@@ -123,17 +137,33 @@ const SIDEBAR_EXPANDED_KEY = "udp-sidebar-expanded";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
+  const { hasPageAccess, isLoading: rbacLoading } = useRbac();
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [expandedItems, setExpandedItems] = React.useState<string[]>([]);
   const [userMenuOpen, setUserMenuOpen] = React.useState(false);
   const [user, setUser] = React.useState<UserInfo | null>(null);
   const [copilotOpen, setCopilotOpen] = React.useState(false);
   const [omniOpen, setOmniOpen] = React.useState(false);
+  const [accessDeniedToast, setAccessDeniedToast] = React.useState(false);
   // Mobile menu state - used in route change effect
   const [, setMobileMenuOpen] = React.useState(false);
   const userMenuRef = React.useRef<HTMLDivElement>(null);
   const initializedRef = React.useRef(false);
+
+  // Check for access denied redirect
+  React.useEffect(() => {
+    if (searchParams.get("access_denied") === "1") {
+      setAccessDeniedToast(true);
+      // Remove the query param from URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete("access_denied");
+      router.replace(url.pathname);
+      // Auto-hide toast
+      setTimeout(() => setAccessDeniedToast(false), 5000);
+    }
+  }, [searchParams, router]);
 
   // Load sidebar state from localStorage on mount
   React.useEffect(() => {
@@ -256,17 +286,36 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
   const isAdmin = user?.roles.includes("admin") ?? false;
+  const isPlatformOwner = (user?.tenant?.isPlatformOwner && isAdmin) ?? false;
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/login");
   };
 
-  // Filter navigation based on role
-  const filteredNavigation = navigation.filter((item) => {
-    if (item.adminOnly && !isAdmin) return false;
-    return true;
-  });
+  // Filter navigation based on role, platform owner status, and RBAC page access
+  const filteredNavigation = React.useMemo(() => {
+    return navigation.filter((item) => {
+      // Admin-only check
+      if (item.adminOnly && !isAdmin) return false;
+      // Platform owner check
+      if (item.platformOwnerOnly && !isPlatformOwner) return false;
+      // RBAC page access check (skip for admins - they have full access)
+      if (!isAdmin && !rbacLoading && !hasPageAccess(item.href)) return false;
+      return true;
+    }).map((item) => {
+      // Also filter children based on RBAC
+      if (item.children && !isAdmin) {
+        const filteredChildren = item.children.filter(
+          (child) => rbacLoading || hasPageAccess(child.href)
+        );
+        // If all children are filtered out, hide the parent too
+        if (filteredChildren.length === 0) return null;
+        return { ...item, children: filteredChildren };
+      }
+      return item;
+    }).filter((item): item is NavItem => item !== null);
+  }, [isAdmin, isPlatformOwner, hasPageAccess, rbacLoading]);
 
   // Get current section name for breadcrumb
   const getCurrentSection = () => {
@@ -514,6 +563,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           setCopilotOpen(true);
         }}
       />
+
+      {/* Access Denied Toast */}
+      {accessDeniedToast && (
+        <div className="fixed bottom-4 right-4 z-50 animate-slide-up">
+          <div className="flex items-center gap-3 px-4 py-3 bg-red-500/90 backdrop-blur-xl text-white rounded-xl shadow-xl border border-red-400/20">
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <span className="text-sm font-medium">You don't have access to that page</span>
+            <button
+              onClick={() => setAccessDeniedToast(false)}
+              className="p-1 hover:bg-white/20 rounded-lg transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

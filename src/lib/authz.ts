@@ -15,6 +15,9 @@ export const ROLES = {
   INVENTORY: "inventory",
   SALES: "sales",
   PROCUREMENT: "procurement",
+  HR: "hr",
+  MARKETING: "marketing",
+  GRC: "grc",
 } as const;
 
 export type RoleName = (typeof ROLES)[keyof typeof ROLES];
@@ -122,11 +125,17 @@ export function forbiddenResponse(message = "Forbidden: insufficient permissions
 // ============================================================================
 
 /**
- * Permission cache to avoid repeated database queries
+ * Permission cache to avoid repeated database queries.
  * Key: "tenantId:role1,role2" -> { permissions: string[], expiry: number }
+ *
+ * NOTE: This is an in-memory cache scoped to a single process.
+ * In serverless/multi-instance deployments, permission changes propagate
+ * within CACHE_TTL (10s). For stronger consistency, replace with
+ * a shared cache (Redis/Upstash) and invalidate on permission updates.
  */
 const permissionCache = new Map<string, { permissions: string[]; expiry: number }>();
-const CACHE_TTL = 60000; // 1 minute
+const CACHE_TTL = 10_000; // 10 seconds - short TTL for multi-instance safety
+const MAX_CACHE_SIZE = 500; // Prevent unbounded growth
 
 /**
  * Get all permissions for a user's roles in a tenant
@@ -175,6 +184,12 @@ export async function getUserPermissions(
     );
 
   const userPermissions = [...new Set(permissionRows.map((p) => p.code))];
+
+  // Evict oldest entries if cache is too large
+  if (permissionCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = permissionCache.keys().next().value;
+    if (firstKey) permissionCache.delete(firstKey);
+  }
 
   // Cache the result
   permissionCache.set(cacheKey, {
@@ -287,4 +302,53 @@ export function clearPermissionCache(tenantId?: string): void {
   } else {
     permissionCache.clear();
   }
+}
+
+// ============================================================================
+// PLATFORM OWNER VERIFICATION
+// ============================================================================
+
+import { tenants } from "@/db/schema";
+
+/**
+ * Check if the current user's tenant is the platform owner
+ * Returns true if the tenant has is_platform_owner = true AND user has admin role
+ */
+export async function isPlatformOwner(auth: AuthContext): Promise<boolean> {
+  // Must have admin role to access platform management
+  if (!auth.roles.includes(ROLES.ADMIN)) {
+    return false;
+  }
+
+  // Check if tenant is platform owner
+  const tenant = await db
+    .select({ isPlatformOwner: tenants.isPlatformOwner })
+    .from(tenants)
+    .where(eq(tenants.id, auth.tenantId))
+    .limit(1);
+
+  return tenant.length > 0 && tenant[0].isPlatformOwner === true;
+}
+
+/**
+ * Require platform owner access - returns 403/404 if not platform owner
+ */
+export async function requirePlatformOwner(
+  req: NextRequest
+): Promise<AuthContext | NextResponse> {
+  const authResult = requireAuth(req);
+
+  if (authResult instanceof NextResponse) {
+    return authResult;
+  }
+
+  const auth = authResult as AuthContext;
+  const isOwner = await isPlatformOwner(auth);
+
+  if (!isOwner) {
+    // Return 404 to hide existence of platform-only routes
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  return auth;
 }

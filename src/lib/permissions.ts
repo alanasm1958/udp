@@ -38,6 +38,25 @@ export const PERMISSIONS = {
   HR_CREATE: "hr:create",
   HR_EDIT: "hr:edit",
   HR_DELETE: "hr:delete",
+  HR_APPROVE: "hr:approve",
+
+  // Marketing
+  MARKETING_VIEW: "marketing:view",
+  MARKETING_CREATE: "marketing:create",
+  MARKETING_EDIT: "marketing:edit",
+  MARKETING_DELETE: "marketing:delete",
+
+  // GRC (Governance, Risk, Compliance)
+  GRC_VIEW: "grc:view",
+  GRC_CREATE: "grc:create",
+  GRC_EDIT: "grc:edit",
+  GRC_EVALUATE: "grc:evaluate",
+
+  // Strategy
+  STRATEGY_VIEW: "strategy:view",
+  STRATEGY_CREATE: "strategy:create",
+  STRATEGY_EDIT: "strategy:edit",
+  STRATEGY_DELETE: "strategy:delete",
 
   // Admin
   ADMIN_USERS: "admin:users",
@@ -90,6 +109,25 @@ export const ALL_PERMISSIONS: Array<{
   { code: "hr:create", module: "hr", action: "create", description: "Create employee records" },
   { code: "hr:edit", module: "hr", action: "edit", description: "Edit employee records" },
   { code: "hr:delete", module: "hr", action: "delete", description: "Delete employee records" },
+  { code: "hr:approve", module: "hr", action: "approve", description: "Approve payroll and leave requests" },
+
+  // Marketing
+  { code: "marketing:view", module: "marketing", action: "view", description: "View marketing campaigns and channels" },
+  { code: "marketing:create", module: "marketing", action: "create", description: "Create marketing campaigns" },
+  { code: "marketing:edit", module: "marketing", action: "edit", description: "Edit marketing campaigns" },
+  { code: "marketing:delete", module: "marketing", action: "delete", description: "Delete marketing campaigns" },
+
+  // GRC (Governance, Risk, Compliance)
+  { code: "grc:view", module: "grc", action: "view", description: "View compliance requirements and controls" },
+  { code: "grc:create", module: "grc", action: "create", description: "Create compliance requirements" },
+  { code: "grc:edit", module: "grc", action: "edit", description: "Edit compliance requirements" },
+  { code: "grc:evaluate", module: "grc", action: "evaluate", description: "Evaluate compliance with AI" },
+
+  // Strategy
+  { code: "strategy:view", module: "strategy", action: "view", description: "View strategic initiatives and KPIs" },
+  { code: "strategy:create", module: "strategy", action: "create", description: "Create strategic initiatives" },
+  { code: "strategy:edit", module: "strategy", action: "edit", description: "Edit strategic initiatives" },
+  { code: "strategy:delete", module: "strategy", action: "delete", description: "Delete strategic initiatives" },
 
   // Admin
   { code: "admin:users", module: "admin", action: "users", description: "Manage users" },
@@ -140,6 +178,32 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "procurement:post",
     "inventory:view", // Can view inventory for reorder
   ],
+
+  hr: [
+    "hr:view",
+    "hr:create",
+    "hr:edit",
+    "hr:delete",
+    "hr:approve",
+    "finance:view", // Can view finance for payroll posting
+  ],
+
+  marketing: [
+    "marketing:view",
+    "marketing:create",
+    "marketing:edit",
+    "marketing:delete",
+    "sales:view", // Cross-module visibility for campaign alignment
+  ],
+
+  grc: [
+    "grc:view",
+    "grc:create",
+    "grc:edit",
+    "grc:evaluate",
+    "finance:view", // Can view finance for compliance auditing
+    "hr:view", // Can view HR for compliance checks
+  ],
 };
 
 /**
@@ -161,4 +225,4 @@ export function groupPermissionsByModule(
 /**
  * Module display order for consistent UI rendering
  */
-export const MODULE_ORDER = ["finance", "sales", "inventory", "procurement", "hr", "admin"];
+export const MODULE_ORDER = ["finance", "sales", "inventory", "procurement", "hr", "marketing", "grc", "strategy", "admin"];

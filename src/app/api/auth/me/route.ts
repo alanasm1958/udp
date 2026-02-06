@@ -34,12 +34,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       )
       .limit(1);
 
-    // Get tenant details
+    // Get tenant details (including platform owner flag)
     const [tenant] = await db
       .select({
         id: tenants.id,
         name: tenants.name,
         baseCurrency: tenants.baseCurrency,
+        isPlatformOwner: tenants.isPlatformOwner,
       })
       .from(tenants)
       .where(eq(tenants.id, auth.tenantId))
@@ -57,6 +58,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
         id: auth.tenantId,
         name: tenant?.name || "",
         baseCurrency: tenant?.baseCurrency || "USD",
+        isPlatformOwner: tenant?.isPlatformOwner || false,
       },
     });
   } catch (error) {

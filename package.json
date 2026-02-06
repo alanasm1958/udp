@@ -13,10 +13,14 @@
     "db:seed": "tsx scripts/seed-dev.ts",
     "db:bootstrap-coa": "tsx scripts/bootstrap-coa.ts",
     "seed:plans": "tsx scripts/seed/subscription_plans.ts",
+    "seed:rbac": "tsx scripts/seed-rbac.ts",
+    "seed:rbac:platform-owner": "tsx scripts/seed-rbac.ts --set-platform-owner",
     "guard:tenant": "tsx scripts/guardrails/tenant-schema.ts",
     "guard:ledger": "tsx scripts/guardrails/forbidden-ledger-writes.ts",
     "guard:nodelete": "tsx scripts/guardrails/no-deletes-financial.ts",
-    "guard:all": "npm run guard:tenant && npm run guard:ledger && npm run guard:nodelete"
+    "guard:all": "npm run guard:tenant && npm run guard:ledger && npm run guard:nodelete",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.1",
@@ -26,7 +30,8 @@
     "pg": "^8.16.3",
     "react": "19.2.3",
     "react-dom": "19.2.3",
-    "stripe": "^20.1.0"
+    "stripe": "^20.1.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -41,6 +46,7 @@
     "glob": "^11.0.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.0.18"
   }
 }

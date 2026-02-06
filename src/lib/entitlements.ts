@@ -9,23 +9,46 @@ import { db } from "@/db";
 import { tenantSubscriptions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
-export type PlanCode = "free" | "starter" | "pro" | "OFFER_6M_FREE" | "MONTHLY_30";
-export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance" | "ai";
+export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance" | "ai" | "hr" | "marketing" | "grc" | "strategy";
+
+/** All capabilities available in the system */
+const ALL_CAPABILITIES: Capability[] = ["reports", "sales", "procurement", "inventory", "finance", "ai", "hr", "marketing", "grc", "strategy"];
 
 /**
- * Plan capabilities map
- * - free: dashboard + reports only
- * - starter: + sales, procurement, inventory
- * - pro: + finance (posting, payments, AR/AP)
- * - OFFER_6M_FREE, MONTHLY_30: custom plans with full access
+ * Plan capabilities configuration.
+ *
+ * This is the single source of truth for what each plan can access.
+ * To add a new plan, add an entry here. For database-driven plans,
+ * override via PLAN_CAPABILITIES_OVERRIDE env var (JSON string).
+ *
+ * Format: { "plan_code": ["capability1", "capability2"] }
  */
-const PLAN_CAPABILITIES: Record<PlanCode, Capability[]> = {
+const DEFAULT_PLAN_CAPABILITIES: Record<string, Capability[]> = {
   free: ["reports"],
   starter: ["reports", "sales", "procurement", "inventory", "ai"],
-  pro: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
-  OFFER_6M_FREE: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
-  MONTHLY_30: ["reports", "sales", "procurement", "inventory", "finance", "ai"],
+  pro: ALL_CAPABILITIES,
+  OFFER_6M_FREE: ALL_CAPABILITIES,
+  MONTHLY_30: ALL_CAPABILITIES,
 };
+
+function loadPlanCapabilities(): Record<string, Capability[]> {
+  const override = process.env.PLAN_CAPABILITIES_OVERRIDE;
+  if (!override) return DEFAULT_PLAN_CAPABILITIES;
+
+  try {
+    const parsed = JSON.parse(override) as Record<string, string[]>;
+    const merged = { ...DEFAULT_PLAN_CAPABILITIES };
+    for (const [plan, caps] of Object.entries(parsed)) {
+      merged[plan] = caps as Capability[];
+    }
+    return merged;
+  } catch {
+    console.warn("Failed to parse PLAN_CAPABILITIES_OVERRIDE, using defaults");
+    return DEFAULT_PLAN_CAPABILITIES;
+  }
+}
+
+const PLAN_CAPABILITIES = loadPlanCapabilities();
 
 export interface TenantSubscription {
   id: string;
@@ -114,7 +137,7 @@ export function hasActiveSubscription(sub: TenantSubscription | null): boolean {
  * Check if a plan allows a specific capability
  */
 export function planAllows(planCode: string, capability: Capability): boolean {
-  const capabilities = PLAN_CAPABILITIES[planCode as PlanCode];
+  const capabilities = PLAN_CAPABILITIES[planCode];
   if (!capabilities) return false;
   return capabilities.includes(capability);
 }
@@ -123,7 +146,7 @@ export function planAllows(planCode: string, capability: Capability): boolean {
  * Get all capabilities for a plan
  */
 export function getPlanCapabilities(planCode: string): Capability[] {
-  return PLAN_CAPABILITIES[planCode as PlanCode] || [];
+  return PLAN_CAPABILITIES[planCode] || [];
 }
 
 /**
@@ -154,8 +177,19 @@ export function getCapabilityFromPath(pathname: string): Capability | null {
   // Master data routes - allowed on starter+
   if (pathname.startsWith("/api/master/")) return "sales"; // Treat as sales level
 
-  // Strategy routes - allowed on pro
-  if (pathname.startsWith("/api/strategy/")) return "finance";
+  // HR & People routes
+  if (pathname.startsWith("/api/hr-people/")) return "hr";
+  if (pathname.startsWith("/api/people/")) return "hr";
+  if (pathname.startsWith("/api/payroll/")) return "hr";
+
+  // Marketing routes
+  if (pathname.startsWith("/api/marketing/")) return "marketing";
+
+  // GRC routes
+  if (pathname.startsWith("/api/grc/")) return "grc";
+
+  // Strategy routes
+  if (pathname.startsWith("/api/strategy/")) return "strategy";
 
   // Omni routes (non-inventory) - treat as finance
   if (pathname.startsWith("/api/omni/")) return "finance";
@@ -165,6 +199,9 @@ export function getCapabilityFromPath(pathname: string): Capability | null {
 
   // AI routes - require AI capability
   if (pathname.startsWith("/api/ai/")) return "ai";
+
+  // Sales-Customers routes
+  if (pathname.startsWith("/api/sales-customers/")) return "sales";
 
   // Default: no specific capability needed
   return null;

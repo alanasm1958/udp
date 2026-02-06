@@ -7,5 +7,13 @@ if (!process.env.DATABASE_URL) {
   throw new Error("Missing DATABASE_URL");
 }
 
-export const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const isServerless = process.env.VERCEL === "1" || process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+export const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: isServerless ? 5 : 20,
+  idleTimeoutMillis: isServerless ? 10_000 : 30_000,
+  connectionTimeoutMillis: 5_000,
+});
+
 export const db = drizzle(pool);
