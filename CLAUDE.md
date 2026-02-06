@@ -184,10 +184,6 @@ graph TD
   - Analytics and ROI tracking
   - What-if scenario modeling
 
-### GRC Module (Governance, Risk, Compliance)
-- `/grc` - GRC compliance dashboard
-- `/grc/alerts` - Compliance alerts
-- `/grc/audit` - Audit log and compliance trails
 
 ### Company & Master Data
 - `/company` - Company information and settings
@@ -355,14 +351,6 @@ graph TD
 | /api/sales-customers/salespersons | GET, POST | Salespeople |
 | /api/sales-customers/health | GET | Customer health scores |
 | /api/sales-customers/ai-tasks | GET, POST | AI-generated tasks |
-
-### GRC (/api/grc/)
-| Route | Methods | Description |
-|-------|---------|-------------|
-| /api/grc/requirements | GET, POST | Compliance requirements |
-| /api/grc/requirements/[id]/evaluate | POST | AI evaluation |
-| /api/grc/tasks | GET, POST | GRC tasks |
-| /api/grc/alerts | GET | Compliance alerts |
 
 ### Marketing (/api/marketing/)
 | Route | Methods | Description |
@@ -624,16 +612,6 @@ performanceGoals     - Goals/objectives (id, reviewId, description, weight, self
 performanceReviewRatings - Rating criteria
 ```
 
-### GRC Module (Governance, Risk, Compliance)
-```
-grcRisks             - Risk register (id, tenantId, title, description, category, severity[low|medium|high|critical],
-                       likelihood, impact, status[identified|assessed|mitigated|accepted|closed])
-grcControls          - Control definitions (id, tenantId, title, description, category, status[draft|active|inactive],
-                       frequency, owner)
-grcControlTests      - Control test results (id, controlId, testDate, result[passed|failed|not_tested], notes)
-grcIncidents         - Incident log (id, tenantId, title, description, category, severity, status[open|investigating|resolved|closed],
-                       reportedDate, resolvedDate)
-```
 
 ### Marketing Module
 ```
@@ -1008,7 +986,6 @@ npm run db:seed      # Seed data
 │   │   ├── marketing/
 │   │   ├── operations/
 │   │   ├── strategy/
-│   │   ├── grc/
 │   │   ├── settings/
 │   │   └── admin/
 │   ├── api/             # API routes
@@ -1022,7 +999,6 @@ npm run db:seed      # Seed data
 │   │   ├── payroll/
 │   │   ├── operations/
 │   │   ├── strategy/
-│   │   ├── grc/
 │   │   └── reports/
 │   ├── login/
 │   ├── signup/

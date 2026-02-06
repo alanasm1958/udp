@@ -211,7 +211,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           })),
         },
         actions: [
-          { label: "View Audit Log", type: "navigate", href: "/grc/audit" },
+          { label: "View Audit Log", type: "navigate", href: "/settings" },
           { label: "Snooze 1 Week", type: "snooze", payload: { days: 7 } },
           { label: "Dismiss", type: "dismiss" },
         ],

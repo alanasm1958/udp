@@ -237,7 +237,7 @@ export function PersonProfileDrawer({ open, onClose, personId, onEdit }: PersonP
   // Load activities when tab changes
   React.useEffect(() => {
     if (activeTab === "activity" && personId) {
-      apiGet<{ items: Activity[] }>(`/api/grc/audit?entityType=person&entityId=${personId}&limit=20`)
+      apiGet<{ items: Activity[] }>(`/api/master/alerts?entityType=person&entityId=${personId}&limit=20`)
         .then((res) => setActivities(res.items || []))
         .catch(() => setActivities([]));
     }

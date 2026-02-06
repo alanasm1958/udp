@@ -83,11 +83,6 @@ UDP (Unified Data Platform) is a multi-tenant enterprise resource planning (ERP)
   - Analytics and ROI tracking
   - What-if scenario modeling
 
-### GRC Module (Governance, Risk, Compliance)
-- /grc - GRC compliance dashboard
-- /grc/alerts - Compliance alerts
-- /grc/audit - Audit log and compliance trails
-
 ### Company & Master Data
 - /company - Company information and settings
 - /company/master - Master data configuration
@@ -164,6 +159,5 @@ Sales: salesDocs, salesDocLines, leads, customers, salespersons
 Procurement: purchaseDocs, purchaseDocLines, purchaseReceipts
 Inventory: inventoryMovements, inventoryBalances, warehouses, items
 HR: employees, payrollRuns, compensationRecords, performanceReviews
-GRC: grcRequirements, grcTasks, grcAlerts
 Marketing: marketingChannels, marketingCampaigns, marketingPlans
 `;

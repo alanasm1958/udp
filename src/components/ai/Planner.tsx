@@ -5,7 +5,7 @@ import Link from "next/link";
 import { GlassCard, GlassBadge, Spinner, GlassButton, EmptyState, SlideOver, GlassInput, GlassTextarea, GlassSelect, useToast } from "@/components/ui/glass";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/http";
 
-export type PlannerDomain = "finance" | "sales" | "procurement" | "inventory" | "marketing" | "customers" | "operations" | "grc" | "strategy" | "people" | "company";
+export type PlannerDomain = "finance" | "sales" | "procurement" | "inventory" | "marketing" | "customers" | "operations" | "strategy" | "people" | "company";
 
 interface Alert {
   id: string;
@@ -128,7 +128,7 @@ export function Planner({
   React.useEffect(() => {
     async function loadAlerts() {
       try {
-        const result = await apiGet<{ items: Alert[] }>("/api/grc/alerts");
+        const result = await apiGet<{ items: Alert[] }>("/api/master/alerts");
         // Filter alerts for this domain
         const domainAlerts = result.items.filter(
           (a) => a.domain === domain || mapDomainToAlertDomain(domain) === a.domain
@@ -604,7 +604,6 @@ function mapDomainToAlertDomain(domain: PlannerDomain): string {
     marketing: "sales", // Marketing alerts map to sales
     customers: "sales",
     operations: "sales",
-    grc: "finance",
     strategy: "finance",
     people: "finance",
     company: "finance",
@@ -656,12 +655,6 @@ function getPlaybooksForDomain(domain: PlannerDomain) {
       { id: "inv-2", title: "Reorder Points", description: "Safety stock calculation" },
       { id: "inv-3", title: "Cycle Counting", description: "Inventory accuracy program" },
       { id: "inv-4", title: "Dead Stock", description: "Obsolete inventory disposal" },
-    ],
-    grc: [
-      { id: "grc-1", title: "Compliance Review", description: "Regulatory checklist" },
-      { id: "grc-2", title: "Risk Assessment", description: "Threat identification" },
-      { id: "grc-3", title: "Audit Prep", description: "Documentation readiness" },
-      { id: "grc-4", title: "Incident Response", description: "Issue escalation protocol" },
     ],
     strategy: [
       { id: "strat-1", title: "OKR Setting", description: "Quarterly objective alignment" },

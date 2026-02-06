@@ -671,7 +671,7 @@ export function SettingsTab() {
             <div className="text-xs text-white/40">View structure</div>
           </Link>
           <Link
-            href="/grc/audit"
+            href="/settings"
             className="p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors"
           >
             <div className="text-sm font-medium text-white">Audit Log</div>

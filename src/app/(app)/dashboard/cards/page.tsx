@@ -122,7 +122,6 @@ const domainToPlannerUrl: Record<string, string> = {
   operations: "/operations",
   marketing: "/marketing",
   customers: "/customers",
-  grc: "/grc",
   strategy: "/strategy",
   general: "/strategy",
 };

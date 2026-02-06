@@ -78,7 +78,6 @@ const DOMAINS = [
   { value: "hr", label: "HR & People", icon: Users },
   { value: "finance", label: "Finance", icon: DollarSign },
   { value: "sales", label: "Sales", icon: ShoppingCart },
-  { value: "grc", label: "GRC", icon: Shield },
 ];
 
 const STATUSES = [
@@ -157,8 +156,6 @@ function getDomainColor(domain: string) {
       return "text-green-400";
     case "sales":
       return "text-orange-400";
-    case "grc":
-      return "text-red-400";
     default:
       return "text-white/60";
   }

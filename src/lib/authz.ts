@@ -17,7 +17,6 @@ export const ROLES = {
   PROCUREMENT: "procurement",
   HR: "hr",
   MARKETING: "marketing",
-  GRC: "grc",
 } as const;
 
 export type RoleName = (typeof ROLES)[keyof typeof ROLES];

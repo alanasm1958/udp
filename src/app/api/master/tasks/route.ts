@@ -11,7 +11,7 @@ import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
  * Query params:
  * - status: open|in_progress|blocked|in_review|completed|cancelled|auto_resolved|approved|rejected|expired|all (default: open)
  * - category: standard|compliance|marketing|ai_suggestion|all (default: all)
- * - domain: operations|hr|finance|sales|grc|marketing|all (default: all)
+ * - domain: operations|hr|finance|sales|marketing|all (default: all)
  * - priority: low|normal|high|urgent|critical|all (default: all)
  * - assigneeUserId: UUID to filter by assignee
  * - search: text search in title/description

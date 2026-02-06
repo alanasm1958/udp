@@ -46,12 +46,6 @@ export const PERMISSIONS = {
   MARKETING_EDIT: "marketing:edit",
   MARKETING_DELETE: "marketing:delete",
 
-  // GRC (Governance, Risk, Compliance)
-  GRC_VIEW: "grc:view",
-  GRC_CREATE: "grc:create",
-  GRC_EDIT: "grc:edit",
-  GRC_EVALUATE: "grc:evaluate",
-
   // Strategy
   STRATEGY_VIEW: "strategy:view",
   STRATEGY_CREATE: "strategy:create",
@@ -116,12 +110,6 @@ export const ALL_PERMISSIONS: Array<{
   { code: "marketing:create", module: "marketing", action: "create", description: "Create marketing campaigns" },
   { code: "marketing:edit", module: "marketing", action: "edit", description: "Edit marketing campaigns" },
   { code: "marketing:delete", module: "marketing", action: "delete", description: "Delete marketing campaigns" },
-
-  // GRC (Governance, Risk, Compliance)
-  { code: "grc:view", module: "grc", action: "view", description: "View compliance requirements and controls" },
-  { code: "grc:create", module: "grc", action: "create", description: "Create compliance requirements" },
-  { code: "grc:edit", module: "grc", action: "edit", description: "Edit compliance requirements" },
-  { code: "grc:evaluate", module: "grc", action: "evaluate", description: "Evaluate compliance with AI" },
 
   // Strategy
   { code: "strategy:view", module: "strategy", action: "view", description: "View strategic initiatives and KPIs" },
@@ -196,14 +184,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
     "sales:view", // Cross-module visibility for campaign alignment
   ],
 
-  grc: [
-    "grc:view",
-    "grc:create",
-    "grc:edit",
-    "grc:evaluate",
-    "finance:view", // Can view finance for compliance auditing
-    "hr:view", // Can view HR for compliance checks
-  ],
 };
 
 /**
@@ -225,4 +205,4 @@ export function groupPermissionsByModule(
 /**
  * Module display order for consistent UI rendering
  */
-export const MODULE_ORDER = ["finance", "sales", "inventory", "procurement", "hr", "marketing", "grc", "strategy", "admin"];
+export const MODULE_ORDER = ["finance", "sales", "inventory", "procurement", "hr", "marketing", "strategy", "admin"];

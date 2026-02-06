@@ -244,7 +244,7 @@ function getEntityRoute(entityType: string, entityId: string): string | null {
     user: `/settings/users`,
     journal_entry: `/finance/general-ledger`,
     task: `/operations/planner`,
-    alert: `/grc/alerts`,
+    alert: `/alerts`,
   };
   return routes[entityType] || null;
 }
@@ -681,7 +681,7 @@ function DashboardContent() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-white">Recent Activity</h2>
           <Link
-            href="/grc/audit"
+            href="/settings"
             className="text-sm text-white/50 hover:text-white/70 transition-colors"
           >
             View All

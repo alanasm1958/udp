@@ -75,7 +75,6 @@ const MODULE_DISPLAY_NAMES: Record<string, string> = {
   operations: "Operations",
   people: "People & HR",
   marketing: "Marketing",
-  grc: "GRC (Compliance)",
   strategy: "Strategy",
   company: "Company",
   settings: "Settings",

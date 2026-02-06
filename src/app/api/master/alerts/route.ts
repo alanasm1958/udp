@@ -11,7 +11,7 @@ import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
  * Query params:
  * - status: active|acknowledged|resolved|dismissed|all (default: active)
  * - category: standard|compliance|all (default: all)
- * - domain: operations|hr|finance|sales|grc|all (default: all)
+ * - domain: operations|hr|finance|sales|all (default: all)
  * - severity: info|warning|critical|all (default: all)
  * - source: system|ai|connector|user|all (default: all)
  * - search: text search in title/message

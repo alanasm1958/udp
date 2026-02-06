@@ -89,11 +89,6 @@ export const pagesSeed: PageSeed[] = [
   // Marketing Module
   { code: "marketing", name: "Marketing Hub", route: "/marketing", module: "marketing", displayOrder: 80 },
 
-  // GRC Module
-  { code: "grc", name: "GRC Dashboard", route: "/grc", module: "grc", displayOrder: 90 },
-  { code: "grc-alerts", name: "Compliance Alerts", route: "/grc/alerts", module: "grc", parentPageCode: "grc", displayOrder: 91 },
-  { code: "grc-audit", name: "Audit Log", route: "/grc/audit", module: "grc", parentPageCode: "grc", displayOrder: 92 },
-
   // Strategy Module
   { code: "strategy", name: "Strategy Hub", route: "/strategy", module: "strategy", displayOrder: 100 },
   { code: "strategy-initiatives", name: "Strategic Initiatives", route: "/strategy/initiatives", module: "strategy", parentPageCode: "strategy", displayOrder: 101 },
@@ -209,13 +204,6 @@ export const actionsSeed: ActionSeed[] = [
   { pageCode: "people", code: "create-performance-cycle", name: "Create Performance Cycle", actionType: "form", requiresPermission: "hr:create", displayOrder: 4 },
   { pageCode: "people", code: "create-performance-review", name: "Create Performance Review", actionType: "form", requiresPermission: "hr:create", displayOrder: 5 },
   { pageCode: "people", code: "generate-ai-outcome", name: "Generate AI Outcome", actionType: "button", displayOrder: 6 },
-
-  // GRC Actions
-  { pageCode: "grc", code: "save-profile", name: "Save Business Profile", actionType: "form", displayOrder: 1 },
-  { pageCode: "grc", code: "analyze-requirements", name: "Analyze Requirements", actionType: "button", displayOrder: 2 },
-  { pageCode: "grc", code: "submit-evidence", name: "Submit Evidence", actionType: "form", displayOrder: 3 },
-  { pageCode: "grc-alerts", code: "dismiss-alert", name: "Dismiss Alert", actionType: "button", displayOrder: 1 },
-  { pageCode: "grc-alerts", code: "create-task", name: "Create Task from Alert", actionType: "button", displayOrder: 2 },
 
   // Master Data Actions
   { pageCode: "master-parties", code: "create-party", name: "Create Party", actionType: "form", displayOrder: 1 },

@@ -9,10 +9,10 @@ import { db } from "@/db";
 import { tenantSubscriptions } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 
-export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance" | "ai" | "hr" | "marketing" | "grc" | "strategy";
+export type Capability = "reports" | "sales" | "procurement" | "inventory" | "finance" | "ai" | "hr" | "marketing" | "strategy";
 
 /** All capabilities available in the system */
-const ALL_CAPABILITIES: Capability[] = ["reports", "sales", "procurement", "inventory", "finance", "ai", "hr", "marketing", "grc", "strategy"];
+const ALL_CAPABILITIES: Capability[] = ["reports", "sales", "procurement", "inventory", "finance", "ai", "hr", "marketing", "strategy"];
 
 /**
  * Plan capabilities configuration.
@@ -184,9 +184,6 @@ export function getCapabilityFromPath(pathname: string): Capability | null {
 
   // Marketing routes
   if (pathname.startsWith("/api/marketing/")) return "marketing";
-
-  // GRC routes
-  if (pathname.startsWith("/api/grc/")) return "grc";
 
   // Strategy routes
   if (pathname.startsWith("/api/strategy/")) return "strategy";

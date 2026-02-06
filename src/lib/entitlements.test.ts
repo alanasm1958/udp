@@ -22,7 +22,6 @@ describe("planAllows", () => {
     expect(planAllows("pro", "ai")).toBe(true);
     expect(planAllows("pro", "hr")).toBe(true);
     expect(planAllows("pro", "marketing")).toBe(true);
-    expect(planAllows("pro", "grc")).toBe(true);
     expect(planAllows("pro", "strategy")).toBe(true);
   });
 
@@ -152,10 +151,6 @@ describe("getCapabilityFromPath", () => {
 
   it("maps marketing routes correctly", () => {
     expect(getCapabilityFromPath("/api/marketing/campaigns")).toBe("marketing");
-  });
-
-  it("maps GRC routes correctly", () => {
-    expect(getCapabilityFromPath("/api/grc/requirements")).toBe("grc");
   });
 
   it("maps strategy routes correctly", () => {
