@@ -457,7 +457,7 @@ function SuccessStep({ onComplete }: { onComplete: () => void }) {
       </div>
 
       <div>
-        <h2 className="text-2xl font-bold text-white mb-2">You're All Set!</h2>
+        <h2 className="text-2xl font-bold text-white mb-2">You&apos;re All Set!</h2>
         <p className="text-white/60">
           Your account is ready to use. Start managing your finances and grow your business.
         </p>

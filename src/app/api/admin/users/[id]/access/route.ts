@@ -145,9 +145,9 @@ export async function GET(
 
     // Build page structure with actions
     for (const page of allPages) {
-      const module = page.module || "other";
-      if (!pagesByModule[module]) {
-        pagesByModule[module] = [];
+      const moduleName = page.module || "other";
+      if (!pagesByModule[moduleName]) {
+        pagesByModule[moduleName] = [];
       }
 
       // Get actions for this page
@@ -158,7 +158,7 @@ export async function GET(
           hasAccess: actionAccessMap.get(action.id) ?? false, // Default: no access
         }));
 
-      pagesByModule[module].push({
+      pagesByModule[moduleName].push({
         ...page,
         hasAccess: page.isAlwaysAccessible || (pageAccessMap.get(page.id) ?? false), // Default: no access (except always accessible)
         actions: pageActionsList,

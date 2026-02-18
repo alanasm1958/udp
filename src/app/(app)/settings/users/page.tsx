@@ -244,8 +244,8 @@ export default function SettingsUsersPage() {
     // Update local state optimistically
     if (accessData) {
       const newData = { ...accessData };
-      for (const module of Object.keys(newData.pagesByModule)) {
-        newData.pagesByModule[module] = newData.pagesByModule[module].map((page) =>
+      for (const moduleName of Object.keys(newData.pagesByModule)) {
+        newData.pagesByModule[moduleName] = newData.pagesByModule[moduleName].map((page) =>
           page.id === pageId ? { ...page, hasAccess: !currentAccess } : page
         );
       }
@@ -270,8 +270,8 @@ export default function SettingsUsersPage() {
     // Update local state optimistically
     if (accessData) {
       const newData = { ...accessData };
-      for (const module of Object.keys(newData.pagesByModule)) {
-        newData.pagesByModule[module] = newData.pagesByModule[module].map((page) => ({
+      for (const moduleName of Object.keys(newData.pagesByModule)) {
+        newData.pagesByModule[moduleName] = newData.pagesByModule[moduleName].map((page) => ({
           ...page,
           actions: page.actions.map((action) =>
             action.id === actionId ? { ...action, hasAccess: !currentAccess } : action

@@ -252,7 +252,8 @@ function parseDate(dateStr: string, format: "MDY" | "DMY" | "YMD"): string | nul
   // Try common US format (MM/DD/YYYY)
   const usMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
   if (usMatch) {
-    let [, month, day, year] = usMatch;
+    const [, month, day, rawYear] = usMatch;
+    let year = rawYear;
     if (year.length === 2) {
       year = parseInt(year) > 50 ? `19${year}` : `20${year}`;
     }

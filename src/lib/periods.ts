@@ -230,7 +230,7 @@ export async function calculatePeriodTotals(
 
   let revenue = 0;
   let expenses = 0;
-  let cashChange = 0;
+  const cashChange = 0;
 
   for (const row of results) {
     const debit = parseFloat(row.totalDebit);

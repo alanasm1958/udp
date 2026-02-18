@@ -1,7 +1,7 @@
 /**
  * Guardrail: forbidden-ledger-writes
  *
- * Fails if any file (except src/lib/posting.ts) contains inserts
+ * Fails if any file outside the posting service package contains inserts
  * into journalEntries or journalLines tables.
  *
  * This ensures the single financial write path is maintained.
@@ -12,8 +12,9 @@ import * as path from "path";
 import * as glob from "glob";
 
 const PROJECT_ROOT = path.resolve(__dirname, "../..");
-const ALLOWED_FILES = [
-  "src/lib/posting.ts", // The only allowed location for ledger writes
+const ALLOWED_PATHS = [
+  "src/lib/posting.ts", // Backward-compatible re-export
+  "src/lib/posting/",   // Posting service package implementation
 ];
 
 // Patterns that indicate ledger writes
@@ -41,8 +42,12 @@ function main() {
     const relativePath = file;
     const fullPath = path.join(PROJECT_ROOT, file);
 
-    // Skip allowed files
-    if (ALLOWED_FILES.some((allowed) => relativePath === allowed)) {
+    // Skip allowed posting service paths
+    if (
+      ALLOWED_PATHS.some(
+        (allowed) => relativePath === allowed || relativePath.startsWith(allowed)
+      )
+    ) {
       console.log(`⊖ ${relativePath} (allowed - posting service)`);
       continue;
     }
@@ -81,7 +86,7 @@ function main() {
       console.error(`   > ${v.content}\n`);
     });
     console.error(
-      "Ledger writes are only allowed in src/lib/posting.ts.\n" +
+      "Ledger writes are only allowed in src/lib/posting.ts and src/lib/posting/*.\n" +
         "Move all journal_entries/journal_lines inserts to the posting service."
     );
     process.exit(1);

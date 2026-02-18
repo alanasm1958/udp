@@ -199,7 +199,7 @@ export default function ReconciliationPage() {
           <div className="text-center py-8">
             <p className="text-white/50">No reconciliation sessions found.</p>
             <p className="text-white/40 text-sm mt-2">
-              Click "New Reconciliation" to start reconciling this account.
+              Click &quot;New Reconciliation&quot; to start reconciling this account.
             </p>
           </div>
         </GlassCard>

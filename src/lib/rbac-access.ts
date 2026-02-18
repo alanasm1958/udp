@@ -131,10 +131,10 @@ export async function checkPageAccessByRoute(
   // Fallback: bridge to role-based permissions
   // If no explicit page access record exists, check if the user's roles
   // grant them view permission for this page's module
-  const module = page.module || "other";
+  const moduleName = page.module || "other";
   const userRoleNames = await getUserRoleNames(tenantId, userId);
   const userPermissions = await getUserPermissions(tenantId, userRoleNames);
-  const hasModuleView = hasAnyPermission(userPermissions, [`${module}:view`]);
+  const hasModuleView = hasAnyPermission(userPermissions, [`${moduleName}:view`]);
 
   return {
     hasAccess: hasModuleView,
@@ -143,7 +143,7 @@ export async function checkPageAccessByRoute(
       pageCode: page.code,
       pageName: page.name,
       route: page.route,
-      module,
+      module: moduleName,
       hasAccess: hasModuleView,
       isAlwaysAccessible: false,
     },

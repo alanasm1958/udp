@@ -22,6 +22,8 @@ const SCHEMA_PATH = path.resolve(__dirname, "../../src/db/schema.ts");
 // - tax_brackets: progressive tax brackets (belongs to tax_tables - shared reference data)
 // - deduction_types: standard deduction categories (401k, health, etc. - shared reference data)
 // - earning_types: standard earning categories (salary, overtime, etc. - shared reference data)
+// - pages: global RBAC page catalog shared across all tenants
+// - page_actions: global RBAC action catalog linked to pages
 const ALLOWED_EXCEPTIONS = [
   "tenants",
   "subscription_plans",
@@ -32,6 +34,8 @@ const ALLOWED_EXCEPTIONS = [
   "tax_brackets",
   "deduction_types",
   "earning_types",
+  "pages",
+  "page_actions",
 ];
 
 function main() {
