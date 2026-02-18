@@ -151,7 +151,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (error) {
     console.error("POST /api/auth/login error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Login failed" },
+      { error: "Login failed. Please try again." },
       { status: 500 }
     );
   }

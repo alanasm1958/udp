@@ -209,7 +209,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } catch (error) {
     console.error("POST /api/auth/signup error:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Signup failed" },
+      { error: "Signup failed. Please try again." },
       { status: 500 }
     );
   }

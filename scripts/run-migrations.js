@@ -28,8 +28,16 @@ async function run() {
     let fileSkipped = 0;
 
     for (const stmt of statements) {
-      const cleanStmt = stmt.trim();
-      if (!cleanStmt || cleanStmt.startsWith('--') || cleanStmt === 'SELECT 1;') continue;
+      const lines = stmt.split('\n');
+      while (
+        lines.length > 0 &&
+        (lines[0].trim() === '' || lines[0].trim().startsWith('--'))
+      ) {
+        lines.shift();
+      }
+
+      const cleanStmt = lines.join('\n').trim();
+      if (!cleanStmt || cleanStmt === 'SELECT 1;') continue;
 
       try {
         await client.query(cleanStmt);
