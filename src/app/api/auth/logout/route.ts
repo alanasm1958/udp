@@ -4,10 +4,18 @@
  */
 
 import { NextResponse } from "next/server";
-import { clearSessionCookie } from "@/lib/auth";
+import { NextRequest } from "next/server";
+import { clearSessionCookie, getSessionTokenFromRequest } from "@/lib/auth";
+import { revokeSession } from "@/lib/sessions";
 
-export async function POST(): Promise<NextResponse> {
+export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
+    // Revoke server-side session if token is present
+    const token = getSessionTokenFromRequest(req);
+    if (token) {
+      await revokeSession(token);
+    }
+
     await clearSessionCookie();
 
     return NextResponse.json({ success: true });

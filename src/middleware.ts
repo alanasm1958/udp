@@ -6,6 +6,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { getSessionTokenFromRequest, verifySessionToken } from "@/lib/auth";
+import { isSessionValid } from "@/lib/sessions";
 import { checkSubscriptionAccess } from "@/lib/entitlements";
 import { checkPageAccessByRoute } from "@/lib/rbac-access";
 import { checkRateLimit, rateLimitedResponse, getClientIp, AUTH_RATE_LIMIT } from "@/lib/rate-limit";
@@ -23,6 +24,7 @@ const PUBLIC_PATHS = [
   "/api/auth/signup",
   "/api/auth/bootstrap",
   "/api/billing/plans", // Public for signup page plan selection
+  "/api/cron/", // Cron endpoints use bearer secret auth
   "/_next",
   "/favicon.ico",
   "/next.svg",
@@ -111,6 +113,15 @@ export async function middleware(request: NextRequest) {
 
   if (!session) {
     // Invalid token - redirect to login for pages, return 401 for API
+    if (isApiRoute(pathname)) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // Check token has an active non-revoked server-side session
+  const sessionValid = await isSessionValid(token);
+  if (!sessionValid) {
     if (isApiRoute(pathname)) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -37,7 +37,7 @@ BILLING_PROVIDER="dev"
 ```bash
 npm install
 docker compose up -d          # Start Postgres (if using Docker)
-npm run db:migrate:dev        # Run migrations
+npm run db:migrate            # Run migrations
 npm run dev                   # Start dev server
 ```
 

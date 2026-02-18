@@ -5,11 +5,42 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireTenantIdFromHeaders, TenantError, getUserIdFromHeaders, isValidUUID } from "@/lib/tenant";
+import { requireTenantIdFromHeaders, TenantError, isValidUUID } from "@/lib/tenant";
 import { db } from "@/db";
 import { marketingChannels, marketingConnectors, marketingChannelMetrics } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { getConnector, type AuthState, type FetchOptions } from "@/lib/connectors";
+import { decryptSecret } from "@/lib/secret-crypto";
+
+function resolveConnectorAuthState(raw: AuthState): AuthState {
+  const decoded: AuthState = { ...raw };
+
+  if (typeof raw.accessToken === "string") {
+    try {
+      decoded.accessToken = decryptSecret(raw.accessToken);
+    } catch {
+      decoded.accessToken = raw.accessToken;
+    }
+  }
+
+  if (typeof raw.refreshToken === "string") {
+    try {
+      decoded.refreshToken = decryptSecret(raw.refreshToken);
+    } catch {
+      decoded.refreshToken = raw.refreshToken;
+    }
+  }
+
+  if (typeof raw.apiKey === "string") {
+    try {
+      decoded.apiKey = decryptSecret(raw.apiKey);
+    } catch {
+      decoded.apiKey = raw.apiKey;
+    }
+  }
+
+  return decoded;
+}
 
 export async function POST(
   req: NextRequest,
@@ -17,7 +48,6 @@ export async function POST(
 ): Promise<NextResponse> {
   try {
     const tenantId = requireTenantIdFromHeaders(req);
-    const userId = getUserIdFromHeaders(req);
     const { id } = await params;
 
     if (!isValidUUID(id)) {
@@ -60,7 +90,7 @@ export async function POST(
       return NextResponse.json({ error: "No connector found for this channel" }, { status: 400 });
     }
 
-    const authState = connector[0].authState as AuthState;
+    const authState = resolveConnectorAuthState(connector[0].authState as AuthState);
     const provider = channel[0].integrationProvider;
 
     if (!provider) {

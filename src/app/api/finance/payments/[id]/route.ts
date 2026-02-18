@@ -17,6 +17,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { requireRole, ROLES } from "@/lib/authz";
 
 type PaymentMethod = "cash" | "bank";
 
@@ -36,6 +37,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    const roleCheck = requireRole(req, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const { id: paymentId } = await params;
 
@@ -71,6 +75,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ): Promise<NextResponse> {
   try {
+    const roleCheck = requireRole(req, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

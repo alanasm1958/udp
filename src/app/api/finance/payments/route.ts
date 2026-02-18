@@ -20,6 +20,7 @@ import { createAuditContext } from "@/lib/audit";
 import { validateBody, createPaymentSchema } from "@/lib/api-validation";
 import { parsePagination, paginatedResponse } from "@/lib/pagination";
 import { logger } from "@/lib/logger";
+import { requireRole, ROLES } from "@/lib/authz";
 
 /**
  * GET /api/finance/payments
@@ -27,6 +28,9 @@ import { logger } from "@/lib/logger";
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
+    const roleCheck = requireRole(req, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const { searchParams } = new URL(req.url);
     const { limit, offset } = parsePagination(searchParams);
@@ -98,6 +102,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
+    const roleCheck = requireRole(req, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

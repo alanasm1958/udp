@@ -54,7 +54,14 @@ interface AITaskSuggestion {
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    // Verify cron secret if configured
+    // Require explicit secret in production and verify bearer token.
+    if (process.env.NODE_ENV === "production" && !CRON_SECRET) {
+      return NextResponse.json(
+        { error: "Cron secret is not configured" },
+        { status: 500 }
+      );
+    }
+
     if (CRON_SECRET) {
       const authHeader = req.headers.get("authorization");
       if (authHeader !== `Bearer ${CRON_SECRET}`) {
@@ -66,6 +73,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     const activeTenants = await db
       .select({ id: tenants.id, name: tenants.name })
       .from(tenants)
+      .where(eq(tenants.status, "active"))
       .limit(100);
 
     const results: Array<{

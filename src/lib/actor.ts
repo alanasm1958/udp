@@ -172,5 +172,10 @@ export async function userHasRole(
  * Check if user is a Tenant Admin.
  */
 export async function isTenantAdmin(tenantId: string, userId: string): Promise<boolean> {
+  // "admin" is the canonical role used across auth/session checks.
+  // Keep legacy "Tenant Admin" compatibility for older data.
+  if (await userHasRole(tenantId, userId, "admin")) {
+    return true;
+  }
   return userHasRole(tenantId, userId, "Tenant Admin");
 }

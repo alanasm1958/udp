@@ -6,16 +6,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
-import { tenantSettings, actors } from "@/db/schema";
+import { tenantSettings } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import {
-  requireTenantIdFromHeaders,
-  getUserIdFromHeaders,
-  getActorIdFromHeaders,
   TenantError,
 } from "@/lib/tenant";
-import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { requireRole, ROLES, AuthContext } from "@/lib/authz";
 
 interface FinanceSettings {
   cashAccountCodes: string[];
@@ -30,7 +27,10 @@ interface FinanceSettings {
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const tenantId = requireTenantIdFromHeaders(req);
+    const roleCheck = requireRole(req, [ROLES.ADMIN]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const auth = roleCheck as AuthContext;
+    const tenantId = auth.tenantId;
 
     const [settings] = await db
       .select()
@@ -64,12 +64,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
  */
 export async function PUT(req: NextRequest): Promise<NextResponse> {
   try {
-    const tenantId = requireTenantIdFromHeaders(req);
-    const userIdFromHeader = getUserIdFromHeaders(req);
-    const actorIdFromHeader = getActorIdFromHeaders(req);
-
-    const actor = await resolveActor(tenantId, actorIdFromHeader, userIdFromHeader);
-    const audit = createAuditContext(tenantId, actor.actorId);
+    const roleCheck = requireRole(req, [ROLES.ADMIN]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const auth = roleCheck as AuthContext;
+    const tenantId = auth.tenantId;
+    const audit = createAuditContext(tenantId, auth.actorId);
 
     const body: Partial<FinanceSettings> = await req.json();
 
@@ -101,7 +100,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       // Update existing settings
       const updates: Record<string, unknown> = {
         updatedAt: new Date(),
-        updatedByActorId: actor.actorId,
+        updatedByActorId: auth.actorId,
       };
 
       if (body.cashAccountCodes !== undefined) {
@@ -133,7 +132,7 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
           bankAccountCodes: body.bankAccountCodes || [],
           liquidityMinBalance: (body.liquidityMinBalance || 50000).toString(),
           defaultPaymentTermsDays: body.defaultPaymentTermsDays || 30,
-          updatedByActorId: actor.actorId,
+          updatedByActorId: auth.actorId,
         })
         .returning();
 

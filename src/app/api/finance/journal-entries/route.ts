@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { journalEntries, journalLines, accounts } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
-import { requireTenantIdFromHeaders, TenantError } from "@/lib/tenant";
+import {
+  requireTenantIdFromHeaders,
+  getUserIdFromHeaders,
+  getActorIdFromHeaders,
+  TenantError,
+} from "@/lib/tenant";
+import { resolveActor } from "@/lib/actor";
 import { createSimpleLedgerEntry } from "@/lib/posting";
+import { requireRole, ROLES } from "@/lib/authz";
 
 interface JournalLineInput {
   accountId?: string;
@@ -14,6 +21,9 @@ interface JournalLineInput {
 
 export async function GET(request: NextRequest) {
   try {
+    const roleCheck = requireRole(request, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(request);
     const { searchParams } = new URL(request.url);
     const limit = parseInt(searchParams.get("limit") || "100");
@@ -84,27 +94,25 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const roleCheck = requireRole(request, [ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(request);
+    const userIdFromHeader = getUserIdFromHeaders(request);
+    const actorIdFromHeader = getActorIdFromHeaders(request);
+    const actor = await resolveActor(tenantId, actorIdFromHeader, userIdFromHeader);
     const body = await request.json();
 
     const {
       postingDate,
       memo,
       lines = [],
-      actorId, // Required: ID of the actor posting this entry
     } = body;
 
     // Validate lines
     if (!lines || lines.length < 2) {
       return NextResponse.json(
         { error: "Journal entry must have at least two lines" },
-        { status: 400 }
-      );
-    }
-
-    if (!actorId) {
-      return NextResponse.json(
-        { error: "Actor ID is required for posting journal entries" },
         { status: 400 }
       );
     }
@@ -139,7 +147,7 @@ export async function POST(request: NextRequest) {
     // Use posting service for ledger writes
     const result = await createSimpleLedgerEntry({
       tenantId,
-      actorId,
+      actorId: actor.actorId,
       postingDate: postingDate || new Date().toISOString().split("T")[0],
       memo: memo || "Manual journal entry",
       source: "manual",

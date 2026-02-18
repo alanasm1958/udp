@@ -7,21 +7,13 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireTenantIdFromHeaders, TenantError, getUserIdFromHeaders, isValidUUID } from "@/lib/tenant";
+import { TenantError } from "@/lib/tenant";
 import { db } from "@/db";
-import { tenantSettings, actors } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { tenantSettings } from "@/db/schema";
+import { eq } from "drizzle-orm";
 import { logAuditEvent } from "@/lib/audit";
-
-// Encrypt credentials (in production, use proper encryption like AES-256-GCM)
-function encryptCredentials(value: string): string {
-  // Simple base64 encoding for now - in production, use proper encryption
-  return Buffer.from(value).toString("base64");
-}
-
-function decryptCredentials(value: string): string {
-  return Buffer.from(value, "base64").toString("utf-8");
-}
+import { requireRole, ROLES, AuthContext } from "@/lib/authz";
+import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
 
 // Provider configuration info
 const PROVIDER_INFO: Record<string, { name: string; setupUrl: string; requiredScopes: string[] }> = {
@@ -49,7 +41,10 @@ const PROVIDER_INFO: Record<string, { name: string; setupUrl: string; requiredSc
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
-    const tenantId = requireTenantIdFromHeaders(req);
+    const roleCheck = requireRole(req, [ROLES.ADMIN]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const auth = roleCheck as AuthContext;
+    const tenantId = auth.tenantId;
 
     const settings = await db
       .select({ oauthCredentials: tenantSettings.oauthCredentials })
@@ -61,10 +56,22 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
     // Return configured providers without exposing secrets
     const configuredProviders = Object.entries(credentials).map(([provider, creds]) => ({
+      // Decrypt client ID for preview to keep UX consistent across storage formats.
+      rawClientId: (() => {
+        const encrypted = (creds as { clientId?: string })?.clientId;
+        if (!encrypted) return "";
+        try {
+          return decryptSecret(encrypted);
+        } catch {
+          return "";
+        }
+      })(),
       provider,
       name: PROVIDER_INFO[provider]?.name || provider,
       configured: !!(creds as { clientId?: string })?.clientId,
-      clientIdPreview: ((creds as { clientId?: string })?.clientId || "").slice(0, 8) + "...",
+    })).map(({ rawClientId, ...rest }) => ({
+      ...rest,
+      clientIdPreview: rawClientId ? `${rawClientId.slice(0, 8)}...` : null,
     }));
 
     // Include all available providers
@@ -95,12 +102,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
 export async function PUT(req: NextRequest): Promise<NextResponse> {
   try {
-    const tenantId = requireTenantIdFromHeaders(req);
-    const userId = getUserIdFromHeaders(req);
-
-    if (!userId || !isValidUUID(userId)) {
-      return NextResponse.json({ error: "Missing or invalid x-user-id header" }, { status: 400 });
-    }
+    const roleCheck = requireRole(req, [ROLES.ADMIN]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const auth = roleCheck as AuthContext;
+    const tenantId = auth.tenantId;
 
     const body = await req.json();
     const { provider, clientId, clientSecret } = body;
@@ -123,18 +128,11 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
       .where(eq(tenantSettings.tenantId, tenantId))
       .limit(1);
 
-    // Get actor
-    const actor = await db
-      .select()
-      .from(actors)
-      .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))
-      .limit(1);
-
-    const actorId = actor.length > 0 ? actor[0].id : null;
+    const actorId = auth.actorId;
 
     const encryptedCreds = {
-      clientId: encryptCredentials(clientId),
-      clientSecret: encryptCredentials(clientSecret),
+      clientId: encryptSecret(clientId),
+      clientSecret: encryptSecret(clientSecret),
     };
 
     if (settings.length === 0) {
@@ -157,16 +155,14 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
         .where(eq(tenantSettings.id, settings[0].id));
     }
 
-    if (actorId) {
-      await logAuditEvent({
-        tenantId,
-        actorId,
-        entityType: "tenant_settings",
-        entityId: tenantId,
-        action: "oauth_credentials_updated",
-        metadata: { provider },
-      });
-    }
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "tenant_settings",
+      entityId: tenantId,
+      action: "oauth_credentials_updated",
+      metadata: { provider },
+    });
 
     return NextResponse.json({ success: true, provider, configured: true });
   } catch (error) {
@@ -183,12 +179,10 @@ export async function PUT(req: NextRequest): Promise<NextResponse> {
 
 export async function DELETE(req: NextRequest): Promise<NextResponse> {
   try {
-    const tenantId = requireTenantIdFromHeaders(req);
-    const userId = getUserIdFromHeaders(req);
-
-    if (!userId || !isValidUUID(userId)) {
-      return NextResponse.json({ error: "Missing or invalid x-user-id header" }, { status: 400 });
-    }
+    const roleCheck = requireRole(req, [ROLES.ADMIN]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+    const auth = roleCheck as AuthContext;
+    const tenantId = auth.tenantId;
 
     const { searchParams } = new URL(req.url);
     const provider = searchParams.get("provider");
@@ -207,17 +201,11 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: "No settings found" }, { status: 404 });
     }
 
-    // Get actor
-    const actor = await db
-      .select()
-      .from(actors)
-      .where(and(eq(actors.tenantId, tenantId), eq(actors.userId, userId)))
-      .limit(1);
-
-    const actorId = actor.length > 0 ? actor[0].id : null;
+    const actorId = auth.actorId;
 
     const existingCreds = (settings[0].oauthCredentials || {}) as Record<string, { clientId: string; clientSecret: string }>;
-    const { [provider]: _, ...remainingCreds } = existingCreds;
+    const remainingCreds = { ...existingCreds };
+    delete remainingCreds[provider];
 
     await db
       .update(tenantSettings)
@@ -228,16 +216,14 @@ export async function DELETE(req: NextRequest): Promise<NextResponse> {
       })
       .where(eq(tenantSettings.id, settings[0].id));
 
-    if (actorId) {
-      await logAuditEvent({
-        tenantId,
-        actorId,
-        entityType: "tenant_settings",
-        entityId: tenantId,
-        action: "oauth_credentials_removed",
-        metadata: { provider },
-      });
-    }
+    await logAuditEvent({
+      tenantId,
+      actorId,
+      entityType: "tenant_settings",
+      entityId: tenantId,
+      action: "oauth_credentials_removed",
+      metadata: { provider },
+    });
 
     return NextResponse.json({ success: true, provider, configured: false });
   } catch (error) {

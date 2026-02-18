@@ -9,11 +9,8 @@ import { db } from "@/db";
 import { marketingChannels, marketingConnectors, tenantSettings } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
 import { logAuditEvent } from "@/lib/audit";
-
-// Decrypt credentials (matches encryption in settings API)
-function decryptCredentials(value: string): string {
-  return Buffer.from(value, "base64").toString("utf-8");
-}
+import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
+import { verifySignedOAuthState } from "@/lib/oauth-state";
 
 // Map provider to credential key in tenant settings
 function getCredentialKey(provider: string): string {
@@ -52,8 +49,8 @@ async function getTenantOAuthCredentials(
 
   try {
     return {
-      clientId: decryptCredentials(creds[credKey].clientId),
-      clientSecret: decryptCredentials(creds[credKey].clientSecret),
+      clientId: decryptSecret(creds[credKey].clientId),
+      clientSecret: decryptSecret(creds[credKey].clientSecret),
     };
   } catch {
     return null;
@@ -273,13 +270,17 @@ export async function GET(
   }
 
   try {
-    // Decode state to get tenant/user/channel info
-    let stateData: { tenantId: string; userId: string; channelId: string; provider: string; timestamp: number };
-    try {
-      stateData = JSON.parse(Buffer.from(state, "base64").toString("utf-8"));
-    } catch {
+    // Verify signed state and decode payload
+    const stateData = verifySignedOAuthState(state);
+    if (!stateData) {
       return NextResponse.redirect(
         `${marketingUrl}?error=${encodeURIComponent("Invalid state parameter")}&provider=${provider}`
+      );
+    }
+
+    if (stateData.provider !== provider) {
+      return NextResponse.redirect(
+        `${marketingUrl}?error=${encodeURIComponent("State provider mismatch")}&provider=${provider}`
       );
     }
 
@@ -292,6 +293,37 @@ export async function GET(
 
     const { tenantId, channelId } = stateData;
     const redirectUri = `${appUrl}/api/marketing/channels/oauth/${provider}/callback`;
+
+    // Verify connector exists and state matches the server-stored pending state.
+    const connector = await db
+      .select()
+      .from(marketingConnectors)
+      .where(
+        and(
+          eq(marketingConnectors.tenantId, tenantId),
+          eq(marketingConnectors.channelId, channelId)
+        )
+      )
+      .limit(1);
+
+    if (connector.length === 0) {
+      return NextResponse.redirect(
+        `${marketingUrl}?error=${encodeURIComponent("Channel not found")}&provider=${provider}`
+      );
+    }
+
+    const connectorState =
+      (connector[0].authState as Record<string, unknown>) || {};
+    const pendingOAuth = (
+      connectorState.pendingOAuth as Record<string, unknown> | undefined
+    ) || null;
+
+    const pendingState = pendingOAuth?.state;
+    if (!pendingState || pendingState !== state) {
+      return NextResponse.redirect(
+        `${marketingUrl}?error=${encodeURIComponent("Invalid or stale OAuth state")}&provider=${provider}`
+      );
+    }
 
     // Get tenant-specific OAuth credentials
     const creds = await getTenantOAuthCredentials(tenantId, provider);
@@ -310,34 +342,18 @@ export async function GET(
       );
     }
 
-    // Update connector with tokens
-    const connector = await db
-      .select()
-      .from(marketingConnectors)
-      .where(
-        and(
-          eq(marketingConnectors.tenantId, tenantId),
-          eq(marketingConnectors.channelId, channelId)
-        )
-      )
-      .limit(1);
-
-    if (connector.length === 0) {
-      return NextResponse.redirect(
-        `${marketingUrl}?error=${encodeURIComponent("Channel not found")}&provider=${provider}`
-      );
-    }
-
-    // Store tokens securely (in production, encrypt these)
-    const authState = {
-      accessToken: tokenResult.accessToken,
-      refreshToken: tokenResult.refreshToken,
+    // Store tokens encrypted and clear pending OAuth state.
+    const authState: Record<string, unknown> = {
+      ...connectorState,
+      accessToken: tokenResult.accessToken ? encryptSecret(tokenResult.accessToken) : null,
+      refreshToken: tokenResult.refreshToken ? encryptSecret(tokenResult.refreshToken) : null,
       expiresAt: tokenResult.expiresIn
         ? new Date(Date.now() + tokenResult.expiresIn * 1000).toISOString()
         : null,
       accountInfo: tokenResult.accountInfo,
       connectedAt: new Date().toISOString(),
     };
+    delete authState.pendingOAuth;
 
     await db
       .update(marketingConnectors)

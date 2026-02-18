@@ -11,11 +11,8 @@ import { marketingChannels, marketingConnectors, actors, tenantSettings } from "
 import { eq, and } from "drizzle-orm";
 import { logAuditEvent } from "@/lib/audit";
 import crypto from "crypto";
-
-// Decrypt credentials (matches encryption in settings API)
-function decryptCredentials(value: string): string {
-  return Buffer.from(value, "base64").toString("utf-8");
-}
+import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
+import { createSignedOAuthState, OAuthStatePayload } from "@/lib/oauth-state";
 
 // Map provider to credential key in tenant settings
 function getCredentialKey(provider: string): string {
@@ -54,8 +51,8 @@ async function getTenantOAuthCredentials(
 
   try {
     return {
-      clientId: decryptCredentials(creds[credKey].clientId),
-      clientSecret: decryptCredentials(creds[credKey].clientSecret),
+      clientId: decryptSecret(creds[credKey].clientId),
+      clientSecret: decryptSecret(creds[credKey].clientSecret),
     };
   } catch {
     return null;
@@ -279,15 +276,21 @@ export async function POST(
         }, { status: 400 });
       }
 
-      // Generate state token for CSRF protection
-      const state = crypto.randomBytes(32).toString("hex");
-      const stateData = JSON.stringify({ tenantId, userId, channelId, provider, timestamp: Date.now() });
-      const encryptedState = Buffer.from(stateData).toString("base64");
+      // Generate signed state token for CSRF/integrity protection.
+      const statePayload: OAuthStatePayload = {
+        tenantId,
+        userId,
+        channelId,
+        provider,
+        timestamp: Date.now(),
+        nonce: crypto.randomBytes(16).toString("hex"),
+      };
+      const signedState = createSignedOAuthState(statePayload);
 
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
       const redirectUri = `${appUrl}/api/marketing/channels/oauth/${provider}/callback`;
 
-      const authUrl = buildAuthUrl(provider, encryptedState, redirectUri, creds);
+      const authUrl = buildAuthUrl(provider, signedState, redirectUri, creds);
 
       if (!authUrl) {
         return NextResponse.json({ error: "Failed to build authorization URL" }, { status: 500 });
@@ -310,16 +313,30 @@ export async function POST(
           tenantId,
           channelId,
           connectionType: "oauth",
-          authState: { state: encryptedState, initiatedAt: new Date().toISOString() },
+          authState: {
+            pendingOAuth: {
+              state: signedState,
+              initiatedAt: new Date().toISOString(),
+            },
+          },
           syncMode: "scheduled",
           isActive: false,
           createdByActorId: actorId,
         });
       } else {
+        const existingAuthState =
+          (existingConnector[0].authState as Record<string, unknown>) || {};
+
         await db
           .update(marketingConnectors)
           .set({
-            authState: { state: encryptedState, initiatedAt: new Date().toISOString() },
+            authState: {
+              ...existingAuthState,
+              pendingOAuth: {
+                state: signedState,
+                initiatedAt: new Date().toISOString(),
+              },
+            },
             updatedAt: new Date(),
           })
           .where(eq(marketingConnectors.id, existingConnector[0].id));
@@ -365,7 +382,7 @@ export async function POST(
       }
 
       // Store encrypted API key
-      const encryptedApiKey = Buffer.from(apiKey).toString("base64"); // In production, use proper encryption
+      const encryptedApiKey = encryptSecret(apiKey);
 
       const existingConnector = await db
         .select()

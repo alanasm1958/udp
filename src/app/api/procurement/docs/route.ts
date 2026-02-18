@@ -18,6 +18,7 @@ import {
 } from "@/lib/tenant";
 import { resolveActor } from "@/lib/actor";
 import { createAuditContext } from "@/lib/audit";
+import { requireRole, ROLES } from "@/lib/authz";
 
 interface CreatePurchaseDocRequest {
   docType: string;
@@ -41,6 +42,9 @@ interface CreatePurchaseDocRequest {
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
+    const roleCheck = requireRole(req, [ROLES.PROCUREMENT, ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const url = new URL(req.url);
 
@@ -111,6 +115,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
+    const roleCheck = requireRole(req, [ROLES.PROCUREMENT, ROLES.FINANCE]);
+    if (roleCheck instanceof NextResponse) return roleCheck;
+
     const tenantId = requireTenantIdFromHeaders(req);
     const userIdFromHeader = getUserIdFromHeaders(req);
     const actorIdFromHeader = getActorIdFromHeaders(req);

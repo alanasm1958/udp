@@ -17,6 +17,7 @@ import {
 import { eq, and } from "drizzle-orm";
 import { hashPassword } from "@/lib/password";
 import { createSessionToken, setSessionCookie } from "@/lib/auth";
+import { createSession } from "@/lib/sessions";
 import { z } from "zod";
 
 const signupSchema = z.object({
@@ -176,6 +177,16 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       tenantId: tenant.id,
       roles: ["admin"],
       email: user.email,
+    });
+
+    // Record session for revocation support
+    await createSession({
+      tenantId: tenant.id,
+      userId: user.id,
+      token,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      userAgent: req.headers.get("user-agent") || undefined,
+      ipAddress: req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined,
     });
 
     // Set session cookie
