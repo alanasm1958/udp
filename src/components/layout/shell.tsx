@@ -444,7 +444,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {/* Main content area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Top header */}
-        <header className="glass-header h-16 flex items-center justify-between px-6">
+        <header className="glass-header h-16 flex items-center justify-between px-6 relative z-30">
           <div className="flex items-center gap-2 text-sm">
             <span className="text-white/40">{user?.tenant?.name || "Workspace"}</span>
             <span className="text-white/20">/</span>
@@ -495,7 +495,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
             {/* Dropdown */}
             {userMenuOpen && (
-              <div className="absolute right-0 mt-2 w-56 py-2 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl animate-scale-up">
+              <div className="absolute right-0 mt-2 w-56 py-2 bg-zinc-900/95 backdrop-blur-xl border border-white/10 rounded-xl shadow-xl z-50 animate-scale-up">
                 <div className="px-4 py-2 border-b border-white/10">
                   <p className="text-sm font-medium text-white">{user?.fullName}</p>
                   <p className="text-xs text-white/50">{user?.email}</p>
