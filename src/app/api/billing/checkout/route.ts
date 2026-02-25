@@ -64,6 +64,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         periodEnd.setDate(periodEnd.getDate() + plan.trialDays);
       } else if (plan.durationMonths) {
         periodEnd.setMonth(periodEnd.getMonth() + plan.durationMonths);
+      } else if (plan.billingType === "trial" && !plan.trialDays && !plan.durationMonths) {
+        // Free plan with no expiry
+        periodEnd.setFullYear(periodEnd.getFullYear() + 100);
       } else {
         periodEnd.setMonth(periodEnd.getMonth() + (plan.intervalCount || 1));
       }
@@ -126,12 +129,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     let stripePriceId = plan.stripePriceId;
     let trialDays: number | undefined;
 
-    if (plan.billingType === "trial") {
-      // For trial offers, use the MONTHLY_30 price with trial period
+    if (plan.billingType === "trial" && plan.code !== "free") {
+      // For trial offers with a paid fallback, look up a recurring plan
       const [monthlyPlan] = await db
         .select()
         .from(subscriptionPlans)
-        .where(eq(subscriptionPlans.code, "MONTHLY_30"))
+        .where(eq(subscriptionPlans.code, "monthly_30"))
         .limit(1);
 
       if (monthlyPlan?.stripePriceId) {
@@ -206,7 +209,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         const now = new Date();
         await db.insert(tenantSubscriptions).values({
           tenantId,
-          planCode: "MONTHLY_30", // Will be updated by webhook
+          planCode: "free", // Will be updated by webhook
           status: "trialing",
           isCurrent: true,
           startedAt: now,

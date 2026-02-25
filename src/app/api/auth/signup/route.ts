@@ -150,6 +150,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       periodEnd.setDate(periodEnd.getDate() + plan.trialDays);
     } else if (plan.durationMonths) {
       periodEnd.setMonth(periodEnd.getMonth() + plan.durationMonths);
+    } else if (plan.billingType === "trial" && !plan.trialDays && !plan.durationMonths) {
+      // Free plan with no expiry — set far in the future
+      periodEnd.setFullYear(periodEnd.getFullYear() + 100);
     } else {
       periodEnd.setMonth(periodEnd.getMonth() + (plan.intervalCount || 1));
     }

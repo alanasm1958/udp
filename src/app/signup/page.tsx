@@ -7,16 +7,8 @@ import {
   GlassCard,
   GlassButton,
   GlassInput,
-  GlassSelect,
   Spinner,
 } from "@/components/ui/glass";
-
-interface Plan {
-  code: string;
-  name: string;
-  description: string;
-  priceAmount: string;
-}
 
 export default function SignupPage() {
   const router = useRouter();
@@ -24,35 +16,8 @@ export default function SignupPage() {
   const [adminName, setAdminName] = React.useState("");
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
-  const [planCode, setPlanCode] = React.useState("OFFER_6M_FREE");
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [plans, setPlans] = React.useState<Plan[]>([]);
-  const [plansLoading, setPlansLoading] = React.useState(true);
-
-  // Fetch available plans
-  React.useEffect(() => {
-    async function fetchPlans() {
-      try {
-        const res = await fetch("/api/billing/plans");
-        if (res.ok) {
-          const data = await res.json();
-          setPlans(data.plans || []);
-        }
-      } catch (err) {
-        console.error("Failed to fetch plans:", err);
-        // Fallback plans
-        setPlans([
-          { code: "OFFER_6M_FREE", name: "Limited Offer", description: "Free for 6 months", priceAmount: "0.00" },
-          { code: "MONTHLY_30", name: "Monthly", description: "$30 per month", priceAmount: "30.00" },
-          { code: "SEMIANNUAL_25", name: "6-Month Package", description: "$25/mo billed every 6 months", priceAmount: "150.00" },
-        ]);
-      } finally {
-        setPlansLoading(false);
-      }
-    }
-    fetchPlans();
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,7 +33,7 @@ export default function SignupPage() {
           adminName,
           email,
           password,
-          planCode,
+          planCode: "free",
         }),
       });
 
@@ -88,11 +53,6 @@ export default function SignupPage() {
       setLoading(false);
     }
   };
-
-  const planOptions = plans.map((p) => ({
-    value: p.code,
-    label: `${p.name} - ${parseFloat(p.priceAmount) === 0 ? "Free" : `$${p.priceAmount}`}`,
-  }));
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
@@ -160,30 +120,6 @@ export default function SignupPage() {
                 minLength={8}
               />
 
-              {plansLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Spinner size="sm" />
-                  <span className="ml-2 text-sm text-white/50">Loading plans...</span>
-                </div>
-              ) : (
-                <GlassSelect
-                  label="Select Plan"
-                  value={planCode}
-                  onChange={(e) => setPlanCode(e.target.value)}
-                  options={planOptions}
-                  disabled={loading}
-                />
-              )}
-
-              {/* Selected plan description */}
-              {!plansLoading && plans.length > 0 && (
-                <div className="p-3 rounded-lg bg-white/5 border border-white/10">
-                  <p className="text-xs text-white/60">
-                    {plans.find((p) => p.code === planCode)?.description || "Select a plan"}
-                  </p>
-                </div>
-              )}
-
               {error && (
                 <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
                   <p className="text-sm text-red-400">{error}</p>
@@ -195,7 +131,7 @@ export default function SignupPage() {
                 variant="primary"
                 size="lg"
                 className="w-full"
-                disabled={loading || plansLoading}
+                disabled={loading}
               >
                 {loading ? (
                   <>

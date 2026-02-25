@@ -24,11 +24,8 @@ const ALL_CAPABILITIES: Capability[] = ["reports", "sales", "procurement", "inve
  * Format: { "plan_code": ["capability1", "capability2"] }
  */
 const DEFAULT_PLAN_CAPABILITIES: Record<string, Capability[]> = {
-  free: ["reports"],
-  starter: ["reports", "sales", "procurement", "inventory", "ai"],
+  free: ALL_CAPABILITIES,
   pro: ALL_CAPABILITIES,
-  OFFER_6M_FREE: ALL_CAPABILITIES,
-  MONTHLY_30: ALL_CAPABILITIES,
 };
 
 function loadPlanCapabilities(): Record<string, Capability[]> {

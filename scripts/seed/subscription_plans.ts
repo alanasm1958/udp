@@ -26,9 +26,24 @@ interface PlanDefinition {
 
 const plans: PlanDefinition[] = [
   {
+    code: "free",
+    name: "Free",
+    description: "Full access to all features. No credit card required.",
+    currency: "USD",
+    priceAmount: "0.00",
+    billingType: "trial",
+    interval: "month",
+    intervalCount: 1,
+    trialDays: null,
+    durationMonths: null,
+    isPromotional: false,
+    isActive: true,
+  },
+  // Deactivate legacy plans via upsert
+  {
     code: "monthly_30",
-    name: "Monthly",
-    description: "Full access billed monthly. Cancel anytime.",
+    name: "Monthly (Legacy)",
+    description: "Legacy plan - no longer available.",
     currency: "USD",
     priceAmount: "30.00",
     billingType: "recurring",
@@ -37,12 +52,12 @@ const plans: PlanDefinition[] = [
     trialDays: null,
     durationMonths: null,
     isPromotional: false,
-    isActive: true,
+    isActive: false,
   },
   {
     code: "six_month_pack_25",
-    name: "6-Month Package",
-    description: "Best value - $25/month billed upfront for 6 months.",
+    name: "6-Month Package (Legacy)",
+    description: "Legacy plan - no longer available.",
     currency: "USD",
     priceAmount: "150.00",
     billingType: "recurring",
@@ -51,12 +66,12 @@ const plans: PlanDefinition[] = [
     trialDays: null,
     durationMonths: 6,
     isPromotional: false,
-    isActive: true,
+    isActive: false,
   },
   {
     code: "promo_free_6m",
-    name: "Limited Offer",
-    description: "6 months free - promotional offer. Ends March 2026.",
+    name: "Limited Offer (Legacy)",
+    description: "Legacy plan - no longer available.",
     currency: "USD",
     priceAmount: "0.00",
     billingType: "trial",
@@ -65,7 +80,7 @@ const plans: PlanDefinition[] = [
     trialDays: 180,
     durationMonths: 6,
     isPromotional: true,
-    isActive: true,
+    isActive: false,
   },
 ];
 
@@ -106,7 +121,7 @@ async function seedPlans() {
           updatedAt: sql`now()`,
         },
       });
-    console.log(`  - ${plan.code}: ${plan.name}`);
+    console.log(`  - ${plan.code}: ${plan.name} (active: ${plan.isActive})`);
   }
 
   console.log("Done seeding subscription plans.");
