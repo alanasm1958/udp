@@ -31,10 +31,12 @@ fi
 # Test 2: Login as admin
 echo ""
 echo "=== Test 2: Login as admin ==="
+SMOKE_EMAIL="${SMOKE_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL:-admin@local}}"
+SMOKE_PASSWORD="${SMOKE_PASSWORD:?Set SMOKE_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD env var}"
 LOGIN=$(curl -s -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
   -c "$COOKIE_FILE" \
-  -d '{"email":"admin@local","password":"admin1234"}')
+  -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}")
 
 if echo "$LOGIN" | jq -e '.success' > /dev/null 2>&1; then
   pass "Login successful"

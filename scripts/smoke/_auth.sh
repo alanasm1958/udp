@@ -8,7 +8,7 @@ set -e
 
 export BASE_URL="${BASE_URL:-http://localhost:3000}"
 export SMOKE_EMAIL="${SMOKE_EMAIL:-admin@local}"
-export SMOKE_PASSWORD="${SMOKE_PASSWORD:-admin1234}"
+export SMOKE_PASSWORD="${SMOKE_PASSWORD:?Set SMOKE_PASSWORD env var (or BOOTSTRAP_ADMIN_PASSWORD)}"
 export COOKIE_JAR="${COOKIE_JAR:-/tmp/udp_smoke_cookies_$$.txt}"
 
 smoke_auth_cleanup() {

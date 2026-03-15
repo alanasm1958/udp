@@ -12,10 +12,10 @@ export interface OAuthStatePayload {
 function getOAuthStateSecret(): string {
   const secret = process.env.AUTH_SECRET || process.env.CREDENTIALS_ENCRYPTION_KEY;
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("Missing AUTH_SECRET/CREDENTIALS_ENCRYPTION_KEY for OAuth state signing");
-    }
-    return "dev-oauth-state-secret";
+    throw new Error(
+      "Missing AUTH_SECRET or CREDENTIALS_ENCRYPTION_KEY for OAuth state signing. " +
+      "Generate one with: openssl rand -base64 32"
+    );
   }
   return secret;
 }

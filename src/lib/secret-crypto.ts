@@ -2,13 +2,13 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypt
 
 const ENCRYPTION_PREFIX = "enc:v1";
 
-function getKey(): Buffer | null {
+function getKey(): Buffer {
   const source = process.env.CREDENTIALS_ENCRYPTION_KEY || process.env.AUTH_SECRET || "";
   if (!source) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("Missing CREDENTIALS_ENCRYPTION_KEY or AUTH_SECRET for secret encryption");
-    }
-    return null;
+    throw new Error(
+      "Missing CREDENTIALS_ENCRYPTION_KEY or AUTH_SECRET for secret encryption. " +
+      "Generate one with: openssl rand -base64 32"
+    );
   }
 
   return createHash("sha256").update(source, "utf8").digest();
@@ -16,10 +16,6 @@ function getKey(): Buffer | null {
 
 export function encryptSecret(value: string): string {
   const key = getKey();
-  if (!key) {
-    // Dev fallback for local compatibility when no key is configured.
-    return Buffer.from(value, "utf8").toString("base64");
-  }
 
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
