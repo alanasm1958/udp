@@ -6,7 +6,7 @@ services:
       - "5432:5432"
     environment:
       POSTGRES_USER: udp
-      POSTGRES_PASSWORD: udp_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: udp
     volumes:
       - udp_pgdata:/var/lib/postgresql/data

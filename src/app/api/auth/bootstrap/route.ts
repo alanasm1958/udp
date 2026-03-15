@@ -11,8 +11,10 @@ import { eq, and } from "drizzle-orm";
 import { hashPassword } from "@/lib/password";
 import { ALL_PERMISSIONS, DEFAULT_ROLE_PERMISSIONS } from "@/lib/permissions";
 
-const ADMIN_EMAIL = "admin@local";
-const ADMIN_PASSWORD = "admin1234";
+import crypto from "crypto";
+
+const ADMIN_EMAIL = process.env.BOOTSTRAP_ADMIN_EMAIL || "admin@local";
+const ADMIN_PASSWORD = process.env.BOOTSTRAP_ADMIN_PASSWORD || crypto.randomBytes(16).toString("base64url");
 const ADMIN_NAME = "Admin User";
 const TENANT_NAME = "Dev Tenant";
 
@@ -117,11 +119,7 @@ export async function POST(): Promise<NextResponse> {
     if (existingUser) {
       return NextResponse.json({
         success: true,
-        message: "Bootstrap already completed",
-        credentials: {
-          email: ADMIN_EMAIL,
-          password: ADMIN_PASSWORD,
-        },
+        message: "Bootstrap already completed. Login with the credentials you set via BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD env vars.",
       });
     }
 
@@ -272,16 +270,13 @@ export async function POST(): Promise<NextResponse> {
 
     return NextResponse.json({
       success: true,
-      message: "Bootstrap completed successfully",
+      message: "Bootstrap completed successfully. Login with the credentials you set via BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD env vars.",
       data: {
         tenantId: tenant.id,
         userId: user.id,
         actorId: actor.id,
         roleId: adminRole.id,
-      },
-      credentials: {
         email: ADMIN_EMAIL,
-        password: ADMIN_PASSWORD,
       },
     });
   } catch (error) {

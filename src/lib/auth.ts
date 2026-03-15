@@ -8,10 +8,12 @@ import { cookies } from "next/headers";
 
 function getAuthSecret(): string {
   const secret = process.env.AUTH_SECRET;
-  if (!secret && process.env.NODE_ENV === "production") {
-    throw new Error("AUTH_SECRET environment variable is required in production");
+  if (!secret) {
+    throw new Error(
+      "AUTH_SECRET environment variable is required. Generate one with: openssl rand -base64 32"
+    );
   }
-  return secret || "dev-secret-change-in-production";
+  return secret;
 }
 
 const AUTH_SECRET = getAuthSecret();

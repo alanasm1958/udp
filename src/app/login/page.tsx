@@ -122,7 +122,7 @@ export default function LoginPage() {
             {process.env.NODE_ENV !== "production" && (
               <div className="mt-4 pt-4 border-t border-white/10">
                 <p className="text-xs text-white/30 text-center">
-                  Dev mode: Use <code className="text-white/50">admin@local</code> / <code className="text-white/50">admin1234</code>
+                  Dev mode: Set credentials via BOOTSTRAP_ADMIN_EMAIL / BOOTSTRAP_ADMIN_PASSWORD env vars
                 </p>
               </div>
             )}

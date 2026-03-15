@@ -68,10 +68,12 @@ echo ""
 
 # Test 2: Login
 echo "=== Test 2: Login ==="
+SMOKE_EMAIL="${SMOKE_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL:-admin@local}}"
+SMOKE_PASSWORD="${SMOKE_PASSWORD:?Set SMOKE_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD env var}"
 LOGIN_RESULT=$(curl -s -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
   -c "$COOKIE_JAR" \
-  -d '{"email":"admin@local","password":"admin1234"}')
+  -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}")
 LOGIN_SUCCESS=$(echo "$LOGIN_RESULT" | jq -r '.success // empty')
 if [ "$LOGIN_SUCCESS" != "true" ]; then
   echo "FAIL: Login failed: $LOGIN_RESULT"

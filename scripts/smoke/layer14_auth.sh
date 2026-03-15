@@ -5,7 +5,7 @@
 # Tests:
 # 1. Protected endpoint without auth -> 401
 # 2. Bootstrap admin user (dev only)
-# 3. Login with admin@local/admin1234
+# 3. Login with credentials from env vars
 # 4. /api/auth/me with session -> 200
 # 5. Protected endpoint with session -> 200
 # 6. Admin-only endpoint with admin session -> 200
@@ -70,7 +70,7 @@ echo ""
 echo "=== Test 2: Bootstrap admin user ==="
 BOOTSTRAP_RESULT=$(api_no_auth POST "/api/auth/bootstrap" "{}")
 BOOTSTRAP_SUCCESS=$(echo "$BOOTSTRAP_RESULT" | jq -r '.success // empty')
-BOOTSTRAP_EMAIL=$(echo "$BOOTSTRAP_RESULT" | jq -r '.credentials.email // empty')
+BOOTSTRAP_EMAIL=$(echo "$BOOTSTRAP_RESULT" | jq -r '.data.email // empty')
 if [ "$BOOTSTRAP_SUCCESS" != "true" ]; then
   echo "FAIL: Bootstrap failed: $BOOTSTRAP_RESULT"
   exit 1
@@ -78,12 +78,14 @@ fi
 echo "PASS: Bootstrap completed (email: $BOOTSTRAP_EMAIL)"
 echo ""
 
-# Test 3: Login with admin@local/admin1234
+# Test 3: Login with env-provided credentials
+SMOKE_EMAIL="${SMOKE_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL:-admin@local}}"
+SMOKE_PASSWORD="${SMOKE_PASSWORD:?Set SMOKE_PASSWORD or BOOTSTRAP_ADMIN_PASSWORD env var}"
 echo "=== Test 3: Login ==="
 LOGIN_RESULT=$(curl -s -X POST "$BASE_URL/api/auth/login" \
   -H "Content-Type: application/json" \
   -c "$COOKIE_JAR" \
-  -d '{"email":"admin@local","password":"admin1234"}')
+  -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}")
 LOGIN_SUCCESS=$(echo "$LOGIN_RESULT" | jq -r '.success // empty')
 LOGIN_EMAIL=$(echo "$LOGIN_RESULT" | jq -r '.user.email // empty')
 LOGIN_ROLES=$(echo "$LOGIN_RESULT" | jq -r '.user.roles | join(", ") // empty')
